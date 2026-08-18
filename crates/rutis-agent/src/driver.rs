@@ -73,6 +73,8 @@ pub struct AgentDriver {
     status: StatusCell,
     cancel: Mutex<CancellationToken>,
     max_steps: usize,
+    /// system prompt(minimal mode persona 等);None = 无 system 消息。
+    system_prompt: Option<String>,
 }
 
 impl AgentDriver {
@@ -81,6 +83,7 @@ impl AgentDriver {
         tools: Arc<ToolRegistry>,
         ctx: Ctx,
         max_steps: usize,
+        system_prompt: Option<String>,
     ) -> Self {
         Self {
             llm,
@@ -90,6 +93,7 @@ impl AgentDriver {
             status: StatusCell::idle(),
             cancel: Mutex::new(CancellationToken::new()),
             max_steps,
+            system_prompt,
         }
     }
 
@@ -206,9 +210,11 @@ impl Agent for AgentDriver {
                 }
                 step += 1;
 
-                // 思考:从 session 取全量 history,流式调 aimux
-                let prompt =
-                    convert_to_language_model_prompt(self.session.lock().unwrap().messages(), None);
+                // 思考:从 session 取全量 history(persona 经 instructions 前置),流式调 aimux
+                let prompt = convert_to_language_model_prompt(
+                    self.session.lock().unwrap().messages(),
+                    self.system_prompt.as_deref(),
+                );
                 let mut result = match self.llm.do_stream(&CallOptions {
                     prompt,
                     tools: Some(self.tools.schemas()),
@@ -309,6 +315,7 @@ impl Agent for AgentDriver {
 /// 当前 turn(session 保留,重载即新 driver 新 session)。
 pub struct AgentDriverPlugin {
     max_steps: usize,
+    system_prompt: Option<String>,
     inject_keys: Vec<TypeKey>,
 }
 
@@ -316,8 +323,15 @@ impl AgentDriverPlugin {
     pub fn new(max_steps: usize) -> Self {
         Self {
             max_steps,
+            system_prompt: None,
             inject_keys: vec![llm_key(), tools_key()],
         }
+    }
+
+    /// 静态 system prompt(minimal mode persona);每步作为 instructions 前置。
+    pub fn with_system_prompt(mut self, prompt: impl Into<String>) -> Self {
+        self.system_prompt = Some(prompt.into());
+        self
     }
 }
 
@@ -345,7 +359,13 @@ impl Plugin for AgentDriverPlugin {
             let tools = ctx
                 .get_as::<ToolRegistry>(tools_key())
                 .ok_or_else(|| CordisError::InjectUnsatisfied(vec!["tools".to_string()]))?;
-            let driver = Arc::new(AgentDriver::new(llm, tools, ctx.clone(), self.max_steps));
+            let driver = Arc::new(AgentDriver::new(
+                llm,
+                tools,
+                ctx.clone(),
+                self.max_steps,
+                self.system_prompt.clone(),
+            ));
             ctx.provide_as::<dyn Agent>(agent_key(), driver.clone())?;
 
             // fiber 卸载 → cancel 当前 turn(driver 内 token 级联停止)

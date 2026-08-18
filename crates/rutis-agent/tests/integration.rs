@@ -362,8 +362,7 @@ async fn events_observed_and_listeners_unload_with_fiber() {
         fn apply<'a>(
             &'a self,
             ctx: &'a Ctx,
-        ) -> rutis::BoxFuture<'a, Result<rutis::Effect, rutis::CordisError>>
-        {
+        ) -> rutis::BoxFuture<'a, Result<rutis::Effect, rutis::CordisError>> {
             let events = self.events.clone();
             Box::pin(async move {
                 ctx.events().on(ctx, StepL(events.clone()))?;

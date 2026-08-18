@@ -10,9 +10,7 @@ use std::sync::Arc;
 use aimux_core::language_model::LanguageModel;
 use futures::StreamExt;
 use rutis::Ctx;
-use rutis_agent::{
-    agent_key, llm_key, Agent, AgentDriverPlugin, ToolDef, ToolsPlugin, TurnEvent,
-};
+use rutis_agent::{agent_key, llm_key, Agent, AgentDriverPlugin, ToolDef, ToolsPlugin, TurnEvent};
 use serde_json::{json, Value};
 
 fn weather_tool() -> ToolDef {

@@ -17,13 +17,13 @@ use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use futures::StreamExt;
-use rutis::{BoxFuture, CordisError, Ctx, Effect, Plugin, TypeKey};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 use ratatui::{Frame, Terminal};
+use rutis::{BoxFuture, CordisError, Ctx, Effect, Plugin, TypeKey};
 use tokio::runtime::Handle;
 use tokio::sync::mpsc;
 

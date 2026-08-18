@@ -1,4 +1,5 @@
-//! TUI demo(验证文档 §二):真实 provider + `TuiPlugin`,人实时多轮。
+//! TUI demo(验证文档 §二 + minimal mode):真实 provider + `TuiPlugin`,
+//! 挂 `bash` + `replace_text`(能改文件、能跑命令的最小 coding agent)。
 //!
 //! ```text
 //! cargo run -p rutis-agent --example tui                        # deepseek(读 DEEPSEEK_API_KEY)
@@ -11,7 +12,9 @@ use std::sync::Arc;
 
 use aimux_core::language_model::LanguageModel;
 use rutis::Ctx;
-use rutis_agent::{llm_key, AgentDriverPlugin, ToolDef, ToolsPlugin, TuiPlugin};
+use rutis_agent::{
+    llm_key, minimal_persona, minimal_tools, AgentDriverPlugin, ToolDef, ToolsPlugin, TuiPlugin,
+};
 use serde_json::{json, Value};
 
 fn weather_tool() -> ToolDef {
@@ -44,13 +47,21 @@ async fn main() {
     };
     let llm: Arc<dyn LanguageModel> = Arc::from(model);
 
+    let cwd = std::env::current_dir()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| ".".into());
     let root = Ctx::root().expect("run inside a tokio runtime");
     root.provide_as(llm_key(), llm)
         .expect("provide llm service");
-    let tools_view = root.plugin(ToolsPlugin::new(vec![weather_tool()]));
-    let driver_view = root.plugin(AgentDriverPlugin::new(16));
+    // minimal mode:bash + replace_text(+ get_weather 示例),persona 静态插值
+    let mut tools = minimal_tools();
+    tools.push(weather_tool());
+    let tools_view = root.plugin(ToolsPlugin::new(tools));
+    let driver_view = root
+        .plugin(AgentDriverPlugin::new(16).with_system_prompt(minimal_persona(&model_id, &cwd)));
     let tui_view = root.plugin(TuiPlugin::new().with_intro(vec![
         format!("backend: {provider}/{model_id}"),
+        format!("cwd: {cwd}"),
         "Enter 发送 | Esc 取消当前 turn | Ctrl+Q 退出".to_string(),
     ]));
     (&tools_view).await.expect("tools loads");

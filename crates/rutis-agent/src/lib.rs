@@ -50,6 +50,7 @@
 
 mod agent;
 mod driver;
+mod minimal;
 mod scripted;
 mod session;
 mod tools;
@@ -57,7 +58,10 @@ mod tui;
 
 pub use agent::{agent_key, Agent, AgentError, AgentStatus, SessionSnapshot, TurnEvent};
 pub use driver::{llm_key, AgentDriver, AgentDriverPlugin, AgentStepEvent, AgentToolEvent};
+pub use minimal::{minimal_persona, minimal_tools};
 pub use scripted::{into_service, tool_call, LlmResponse, ScriptedCall, ScriptedLlm};
 pub use session::{Session, SessionId};
+pub use tools::bash::bash_tool;
+pub use tools::replace_text::replace_text_tool;
 pub use tools::{tools_key, ToolDef, ToolOutput, ToolRegistry, ToolsPlugin};
 pub use tui::TuiPlugin;

@@ -2,6 +2,13 @@
 //!
 //! schema 直接用 aimux [`FunctionTool`](进 `CallOptions.tools`);
 //! runner 失败转 `error: ...` 文本回喂模型,panic 任务边界兜底,不崩循环。
+//!
+//! 内置工具(minimal mode,`docs/design-minimal-mode-2026-08-18.md`):
+//! [`bash`](bash) 与 [`replace_text`](replace_text)——`ToolDef` 数据
+//! 装进本插件,不做 dsh 的中央工具服务 + 能力 seam 两层(设计 §三)。
+
+pub mod bash;
+pub mod replace_text;
 
 use std::collections::HashMap;
 use std::future::Future;

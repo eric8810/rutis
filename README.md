@@ -15,7 +15,7 @@ Cordis 核心范式的 Rust 惯用实现(自 [min-cordis](https://github.com/eri
 | crate | 内容 |
 |---|---|
 | [`rutis`](crates/rutis) | 内核:Ctx / fiber / registry / event bus / effect(115 项契约与对拍测试) |
-| [`rutis-agent`](crates/rutis-agent) | 最小 agent 框架:aimux `LanguageModel` 服务 + `ToolsPlugin` + `AgentDriverPlugin`(流式 `followup`)+ 内存 session + ratatui TUI |
+| [`rutis-agent`](crates/rutis-agent) | 最小 agent 框架:aimux `LanguageModel` 服务 + `ToolsPlugin` + `AgentDriverPlugin`(流式 `followup`)+ 内存 session + ratatui TUI;minimal mode 内置 `bash` + `replace_text` 工具(能改文件、能跑命令的 coding agent,设计见 [docs/design-minimal-mode-2026-08-18.md](docs/design-minimal-mode-2026-08-18.md)) |
 
 agent crate 一句话:**一个 aimux [`LanguageModel`](../aimux) 服务 + 一个 `ToolRegistry` 插件 + 一个实现 `Agent` 接口的 driver 插件 + 一个内存 session(连续 loop 的事实源)**。设计见 [docs/design-min-agent-2026-08-18.md](docs/design-min-agent-2026-08-18.md) 与 [docs/design-agent-verification-tui-2026-08-18.md](docs/design-agent-verification-tui-2026-08-18.md)。
 
@@ -52,6 +52,7 @@ provider / model 可用 `AIMUX_PROVIDER` / `AIMUX_MODEL` 覆盖(如本地 `AIMUX
 - [design-rust-port.md](docs/design-rust-port.md) — 内核设计
 - [cordis-spec-parity-2026-08-18.md](docs/cordis-spec-parity-2026-08-18.md) — 与 cordis 原版 spec 对拍
 - [design-min-agent-2026-08-18.md](docs/design-min-agent-2026-08-18.md) / [design-agent-verification-tui-2026-08-18.md](docs/design-agent-verification-tui-2026-08-18.md) — agent 框架与 TUI 设计
+- [design-minimal-mode-2026-08-18.md](docs/design-minimal-mode-2026-08-18.md) — minimal mode(bash + replace_text)
 - [review-rust-impl-2026-08-17.md](docs/review-rust-impl-2026-08-17.md) — 实现评审
 
 ## License
