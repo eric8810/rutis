@@ -34,7 +34,7 @@ let a2 = agent.followup("and in Bergen?").await?;   // history 连续
 // 卸载 llm → driver 自动驱逐(依赖驱动重载)
 ```
 
-**真实层做成 `#[ignore]` 测试 + 可运行 demo**,需要 key/本地服务时手动触发:`cargo test -p min-cordis-agent -- --ignored`。没 key 时 CI 不挂。
+**真实层做成 `#[ignore]` 测试 + 可运行 demo**,需要 key/本地服务时手动触发:`cargo test -p rutis-agent -- --ignored`。没 key 时 CI 不挂。
 
 ## 二、TUI 交互设计(最基础用户交互)
 

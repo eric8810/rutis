@@ -1,4 +1,4 @@
-﻿# min-cordis Rust 移植设计(v5,范式路线)
+﻿# rutis Rust 移植设计(v5,范式路线)
 
 > 2026-08-17 v5 草案。**路线**:范式移植——实现 Cordis 核心范式,Rust 惯用表达,不锚定 TS 96 spec,验收 = 范式契约自证。
 > **状态**:草案。v4 经三轮评审([review-rust-design-2026-08-17-v4.md](review-rust-design-2026-08-17-v4.md)、[review-rust-design-2026-08-17-v4-codex.md](review-rust-design-2026-08-17-v4-codex.md)、[review-rust-design-2026-08-17-v4-zcode.md](review-rust-design-2026-08-17-v4-zcode.md))与两轮决议修订([review-rust-design-2026-08-17-v4-resolution.md](review-rust-design-2026-08-17-v4-resolution.md)),修订落实后经 §九 放行条件核对方可改回定稿。
@@ -226,9 +226,9 @@ TS 96 spec 降级为灵感来源;其中纯范式部分(fiber/dispose/reentrant)�
 
 **2026-08-17 实现完成**(M1+M2+M3,M4 未动)。代码:`rust/` workspace。简化复盘(候选清单与执行计划)见 [simplification-rust-impl-2026-08-18.md](simplification-rust-impl-2026-08-18.md)。
 
-- **crate**:`min-cordis`(核心,rust/crates/min-cordis,~2100 行)、`min-cordis-agent`(示例应用,415 行,含 demo)。
+- **crate**:`rutis`(核心,crates/rutis,~2100 行)、`rutis-agent`(示例应用,含 demo/tui)。
 - **依赖**:tokio 1.53.1(rt-multi-thread/sync/macros/time)、tokio-util 0.7.19、thiserror 2.0.20;agent crate 另加 serde/serde_json(边界,§三)。未引 futures-util/async-trait ✓。
-- **测试**:核心契约 58(§五 全组 + 评审补充 + 简化批次;单线程与并行模式均绿)+ agent 13 + doc 1 = **72**;`cargo run -p min-cordis-agent --example demo` 可运行;`cargo clippy --workspace --all-targets -- -D warnings` 与 `cargo fmt --all -- --check` 清零。
+- **测试**:核心契约 58(§五 全组 + 评审补充 + 简化批次;单线程与并行模式均绿)+ agent 13 + doc 1 = **72**;`cargo run -p rutis-agent --example demo` 可运行;`cargo clippy --workspace --all-targets -- -D warnings` 与 `cargo fmt --all -- --check` 清零。
 - **实现期决策与偏差**(均为评审决议框架内的落定):
   1. `Aggregate { errors: Vec<Arc<CordisError>> }`、`ErrorSink = Fn(Arc<CordisError>)`:D11(不 Clone)与 D25(identity 缓存 Arc)的推论,成员保持 identity。
   2. 新增 `CordisError::ServiceExists`(同键同作用域重复注册);`InjectUnsatisfied` 无 cycle 字样 ✓(D22)。

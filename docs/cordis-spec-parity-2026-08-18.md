@@ -120,7 +120,7 @@
 
 ## 五之二、实施记录(2026-08-18 执行完毕)
 
-**`rust/crates/min-cordis/tests/parity.rs`:57 个测试全绿**(§二全对拍 + §三内核按条目拆分为独立测试;测试名 = 原 `it()` 标题的 snake_case,注释标原文件:行号)。fake timers 一律改为确定性同步点(Notify 门 + watch 状态观察,"未落定"断言依赖"门未放行则完成不可能"而非计时)。已声明的通道偏差(注释留痕):执行错误走 await 通道不重复进 ErrorSink;fiber 级 dispose 返回清理错误(TS resolve+logger;D6/D20 通道)。
+**`crates/rutis/tests/parity.rs`:57 个测试全绿**(§二全对拍 + §三内核按条目拆分为独立测试;测试名 = 原 `it()` 标题的 snake_case,注释标原文件:行号)。fake timers 一律改为确定性同步点(Notify 门 + watch 状态观察,"未落定"断言依赖"门未放行则完成不可能"而非计时)。已声明的通道偏差(注释留痕):执行错误走 await 通道不重复进 ErrorSink;fiber 级 dispose 返回清理错误(TS resolve+logger;D6/D20 通道)。
 
 **对拍暴露并修复的四个实现缺口**(此前 72 测试均未覆盖):
 

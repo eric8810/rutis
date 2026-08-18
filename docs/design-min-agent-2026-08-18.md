@@ -1,6 +1,6 @@
-# 最小 Agent 框架设计(基于 min-cordis + aimux)
+# 最小 Agent 框架设计(基于 rutis + aimux)
 
-> 2026-08-18。目标:定义基于 min-cordis 五支柱的**最小 agent 框架**——要素清单、各自形态、哪些是插件、边界在哪。
+> 2026-08-18。目标:定义基于 rutis 五支柱的**最小 agent 框架**——要素清单、各自形态、哪些是插件、边界在哪。
 > 依据:[deepseek-harness](../deepseek-harness/docs/architecture.md)(插件拆分)、[aimux](../aimux/) `LanguageModel`/`CallOptions`/`Tool`(统一 LLM 访问层)、[design-rust-port.md](design-rust-port.md) v5(五支柱)。
 > 定位:M3 agent crate 的设计依据。**先定义,后实现。**
 
