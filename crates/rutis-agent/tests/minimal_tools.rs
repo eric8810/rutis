@@ -8,16 +8,15 @@
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use aimux_core::language_model::LanguageModel;
-use futures::StreamExt;
-use rutis::Ctx;
+use rutis::{Ctx, Listener};
 use rutis_agent::{
     agent_key, bash_tool, llm_key, minimal_persona, minimal_tools, replace_text_tool, tool_call,
-    Agent, AgentDriverPlugin, AgentStatus, LlmResponse, ScriptedLlm, ToolDef, ToolsPlugin,
-    TurnEvent,
+    Agent, AgentDriverPlugin, AgentStatus, AgentToolResult, LlmResponse, ScriptedLlm, ToolDef,
+    ToolsPlugin,
 };
 use serde_json::{json, Value};
 
@@ -467,24 +466,39 @@ async fn minimal_turn_edits_file_and_runs_command() {
     .await;
 
     let agent = root.get_as::<dyn Agent>(agent_key()).unwrap();
-    let mut events = Vec::new();
-    let mut stream = agent.followup("bump timeout and show the file");
+
+    // 工具结果经 agent/tool-result 事件观察(driver emit,总线广播)
+    let results: Arc<Mutex<Vec<(String, bool, String)>>> = Arc::new(Mutex::new(Vec::new()));
+    struct ToolResultL(Arc<Mutex<Vec<(String, bool, String)>>>);
+    impl Listener<AgentToolResult> for ToolResultL {
+        fn call<'a>(
+            &'a self,
+            _ctx: &'a Ctx,
+            e: &'a AgentToolResult,
+        ) -> rutis::BoxFuture<'a, Result<Option<()>, rutis::CordisError>> {
+            let rs = self.0.clone();
+            let (name, ok, output) = (e.name.clone(), e.ok, e.output.clone());
+            Box::pin(async move {
+                rs.lock().unwrap().push((name, ok, output));
+                Ok(None)
+            })
+        }
+    }
+    let _d = root
+        .events()
+        .on(&root, ToolResultL(results.clone()))
+        .unwrap();
+    let text = soon(agent.followup("bump timeout and show the file")).await.unwrap();
+
+    // 文件真被改、命令真被跑;事件派发与 followup 返回并发,轮询等齐 2 条结果
     soon(async {
-        while let Some(ev) = stream.next().await {
-            events.push(ev);
+        while results.lock().unwrap().len() < 2 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
         }
     })
     .await;
-
-    // 文件真被改、命令真被跑
     assert_eq!(fs::read_to_string(&config).unwrap(), "timeout = 30\n");
-    let results: Vec<_> = events
-        .iter()
-        .filter_map(|ev| match ev {
-            TurnEvent::ToolResult { name, ok, output } => Some((name.clone(), *ok, output.clone())),
-            _ => None,
-        })
-        .collect();
+    let results = results.lock().unwrap().clone();
     assert_eq!(results.len(), 2, "{results:?}");
     assert_eq!(results[0].0, "replace_text");
     assert!(results[0].1);
@@ -494,10 +508,7 @@ async fn minimal_turn_edits_file_and_runs_command() {
     assert!(results[1].2.contains("timeout = 30"), "{results:?}");
 
     // 终答 + 状态回 idle
-    match events.last() {
-        Some(TurnEvent::Done(Ok(text))) => assert_eq!(text, "done: timeout is now 30"),
-        other => panic!("expected Done(Ok), got {other:?}"),
-    }
+    assert_eq!(text, "done: timeout is now 30");
     assert_eq!(agent.status(), AgentStatus::Idle);
 
     // persona 作为 system 消息前置,模型看到了 cwd(锁内只做拷贝,不跨 await)

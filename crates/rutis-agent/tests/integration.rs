@@ -18,11 +18,10 @@ use aimux_core::recording::{
     ResponseRecord, TimingRecord, RECORDING_SCHEMA,
 };
 use aimux_core::replay::MockReplayModel;
-use futures::StreamExt;
 use rutis::{Ctx, FiberState, FiberView, Listener, Plugin};
 use rutis_agent::{
     agent_key, llm_key, tool_call, Agent, AgentDriverPlugin, AgentError, AgentStepEvent,
-    AgentToolEvent, LlmResponse, ScriptedLlm, ToolDef, ToolsPlugin, TurnEvent,
+    AgentTextDelta, AgentToolResult, LlmResponse, ScriptedLlm, ToolDef, ToolsPlugin,
 };
 use serde_json::{json, Value};
 
@@ -48,32 +47,34 @@ async fn wait_state(view: &FiberView, want: FiberState) {
     .await;
 }
 
-/// 消费一个 turn,收集全部事件。
-async fn collect_turn(agent: &Arc<dyn Agent>, input: &str) -> Vec<TurnEvent> {
-    let mut events = Vec::new();
-    let mut stream = agent.followup(input);
-    while let Some(ev) = stream.next().await {
-        events.push(ev);
-    }
-    events
-}
-
-fn final_answer(events: &[TurnEvent]) -> Result<String, AgentError> {
-    match events.last() {
-        Some(TurnEvent::Done(r)) => match r {
-            Ok(s) => Ok(s.clone()),
-            Err(e) => Err(error_clone(e)),
-        },
-        other => panic!("expected Done tail, got {other:?}"),
+/// 收集 `AgentTextDelta` 的 listener:拼接增量进共享缓冲。
+struct TextL(Arc<Mutex<String>>);
+impl Listener<AgentTextDelta> for TextL {
+    fn call<'a>(
+        &'a self,
+        _ctx: &'a Ctx,
+        e: &'a AgentTextDelta,
+    ) -> rutis::BoxFuture<'a, Result<Option<()>, rutis::CordisError>> {
+        let text = self.0.clone();
+        let d = e.delta.clone();
+        Box::pin(async move {
+            text.lock().unwrap().push_str(&d);
+            Ok(None)
+        })
     }
 }
 
-fn error_clone(e: &AgentError) -> AgentError {
-    match e {
-        AgentError::Stopped => AgentError::Stopped,
-        AgentError::MaxSteps(n) => AgentError::MaxSteps(*n),
-        AgentError::Llm(s) => AgentError::Llm(s.clone()),
-    }
+/// 跑一个 turn,返回 (拼接文本, 终态)。
+async fn collect_turn(
+    root: &Ctx,
+    agent: &Arc<dyn Agent>,
+    input: &str,
+) -> (String, Result<String, AgentError>) {
+    let text = Arc::new(Mutex::new(String::new()));
+    let _d = root.events().on(root, TextL(text.clone())).unwrap();
+    let result = agent.followup(input).await;
+    let collected = text.lock().unwrap().clone();
+    (collected, result)
 }
 
 // ── MockReplayModel 录制构造(openai body,单轮直答)──────────────
@@ -232,17 +233,45 @@ async fn replay_backend_drives_followup() {
     (&driver_view).await.expect("driver loads");
 
     let agent = root.get_as::<dyn Agent>(agent_key()).unwrap();
-    let events = soon(collect_turn(&agent, "ping")).await;
-    assert_eq!(final_answer(&events).unwrap(), "pong");
+    // 监听器挂独立 fiber,生存期覆盖整个 turn 与事件派发
+    let text: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+    struct Audit {
+        text: Arc<Mutex<String>>,
+    }
+    impl Plugin for Audit {
+        fn name(&self) -> &str {
+            "audit"
+        }
+        fn apply<'a>(
+            &'a self,
+            ctx: &'a Ctx,
+        ) -> rutis::BoxFuture<'a, Result<rutis::Effect, rutis::CordisError>> {
+            let text = self.text.clone();
+            Box::pin(async move {
+                ctx.events().on(ctx, TextL(text))?;
+                Ok(rutis::Effect::Done)
+            })
+        }
+    }
+    let audit_view = root.plugin(Audit { text: text.clone() });
+    (&audit_view).await.expect("audit loads");
+
+    let done = soon(agent.followup("ping")).await;
+    assert_eq!(done.unwrap(), "pong");
     // 流式路径:TextDelta 到达且拼接等于终答
-    let text: String = events
-        .iter()
-        .filter_map(|e| match e {
-            TurnEvent::TextDelta(d) => Some(d.as_str()),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(text, "pong");
+    soon(async {
+        loop {
+            let t = text.lock().unwrap().clone();
+            if t == "pong" {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await;
+    audit_view.dispose().await.unwrap();
+    tools_view.dispose().await.unwrap();
+    driver_view.dispose().await.unwrap();
 }
 
 // 4. fiber 卸载 → ctx.cancelled() → 运行中的循环停(不靠 sleep,同步点)
@@ -275,35 +304,18 @@ async fn fiber_unload_stops_running_loop() {
     (&driver_view).await.expect("driver loads");
     let agent = root.get_as::<dyn Agent>(agent_key()).unwrap();
 
-    // 后台消费 turn;工具启动后卸载 driver fiber
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<TurnEvent>(16);
-    let consume = tokio::spawn(async move {
-        let mut stream = agent.followup("go slow");
-        while let Some(ev) = stream.next().await {
-            if tx.send(ev).await.is_err() {
-                break;
-            }
-        }
-    });
+    // 后台跑 turn;工具启动后卸载 driver fiber
+    let agent2 = agent.clone();
+    let run = tokio::spawn(async move { agent2.followup("go slow").await });
     started.notified().await; // 工具已启动(同步点,不靠 sleep)
     driver_view.dispose().await.unwrap();
 
-    // 循环停:Done(Err(Stopped)) 到达,任务收尾
-    let mut saw_stopped = false;
-    soon(async {
-        while let Some(ev) = rx.recv().await {
-            if let TurnEvent::Done(Err(AgentError::Stopped)) = ev {
-                saw_stopped = true;
-                break;
-            }
-        }
-    })
-    .await;
+    // 循环停:终态 Err(Stopped),任务收尾
+    let result = soon(run).await.expect("join");
     assert!(
-        saw_stopped,
-        "expected Done(Err(Stopped)) after fiber unload"
+        matches!(result, Err(AgentError::Stopped)),
+        "expected Err(Stopped) after fiber unload, got {result:?}"
     );
-    soon(consume).await.unwrap();
     tools_view.dispose().await.unwrap();
 }
 
@@ -337,16 +349,16 @@ async fn events_observed_and_listeners_unload_with_fiber() {
         }
     }
     struct ToolL(Arc<Mutex<Vec<Seen>>>);
-    impl Listener<AgentToolEvent> for ToolL {
+    impl Listener<AgentToolResult> for ToolL {
         fn call<'a>(
             &'a self,
             _c: &'a Ctx,
-            e: &'a AgentToolEvent,
+            e: &'a AgentToolResult,
         ) -> rutis::BoxFuture<'a, Result<Option<()>, rutis::CordisError>> {
             let ev = self.0.clone();
-            let e = e.clone();
+            let (name, ok) = (e.name.clone(), e.ok);
             Box::pin(async move {
-                ev.lock().unwrap().push(Seen::Tool(e.name.clone(), e.ok));
+                ev.lock().unwrap().push(Seen::Tool(name, ok));
                 Ok(None)
             })
         }
@@ -406,8 +418,8 @@ async fn events_observed_and_listeners_unload_with_fiber() {
     (&driver_view).await.expect("driver loads");
 
     let agent = root.get_as::<dyn Agent>(agent_key()).unwrap();
-    let events_run = soon(collect_turn(&agent, "w")).await;
-    assert_eq!(final_answer(&events_run).unwrap(), "30");
+    let (_, done) = soon(collect_turn(&root, &agent, "w")).await;
+    assert_eq!(done.unwrap(), "30");
 
     soon(async {
         while events.lock().unwrap().len() < 3 {
@@ -429,14 +441,13 @@ async fn events_observed_and_listeners_unload_with_fiber() {
         assert!(matches!(&steps[0], Seen::Step(1, None, 1)));
         assert!(matches!(&steps[1], Seen::Step(2, Some(c), 0) if c == "30"));
         assert_eq!(tools.len(), 1);
-        assert!(matches!(&tools[0], Seen::Tool(name, true) if name == "get_weather"));
-    }
+        assert!(matches!(&tools[0], Seen::Tool(name, true) if name == "get_weather"));    }
     let count_after_run = events.lock().unwrap().len();
 
     // 监听器随 audit fiber 卸载:同一 driver 再跑一轮,无新事件
     audit_view.dispose().await.unwrap();
-    let events_run2 = soon(collect_turn(&agent, "again")).await;
-    assert_eq!(final_answer(&events_run2).unwrap(), "31");
+    let (_, done2) = soon(collect_turn(&root, &agent, "again")).await;
+    assert_eq!(done2.unwrap(), "31");
 
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert_eq!(events.lock().unwrap().len(), count_after_run); // 无残留监听器

@@ -145,7 +145,7 @@ impl ToolRegistry {
 }
 
 impl ToolOutput {
-    fn err(output: String) -> Self {
+    pub(crate) fn err(output: String) -> Self {
         Self { ok: false, output }
     }
 }

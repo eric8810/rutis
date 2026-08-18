@@ -1,11 +1,14 @@
-//! `Agent` 接口——多轮、可观察、可取消、流式(设计 §三.3)。
+//! `Agent` 接口——多轮、可观察、可取消(设计 §三.3)。
+//!
+//! turn 的过程输出走 EventBus,不走独占 stream:`followup` 返回终态,
+//! 文本增量 / 工具调用 / 工具结果经 [`crate::events`] 的 `agent/*`
+//! 事件广播——输出是广播,任何观察方(TUI / 日志 / 未来前端)订阅
+//! 事件即可,晚订阅、只看不动都行;监听器随注册方 fiber 卸载(D28)。
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use aimux_core::message::ModelMessage;
-use futures::stream::BoxStream;
-use rutis::TypeKey;
-use serde_json::Value;
+use rutis::{BoxFuture, TypeKey};
 
 use crate::session::SessionId;
 
@@ -54,24 +57,6 @@ impl StatusCell {
     }
 }
 
-/// 一个 turn 的流式输出:文本增量 + 工具调用边界 + 终态(设计 §三.3)。
-/// TUI/前端逐块消费;session 仍由 driver 回写——流是视图,不是事实源。
-#[derive(Debug)]
-pub enum TurnEvent {
-    /// 模型文本增量(流式)。
-    TextDelta(String),
-    /// 工具调用开始。
-    ToolCall { name: String, args: Value },
-    /// 工具结果(ok=false 时 output 为 `error: ...` 回喂文本)。
-    ToolResult {
-        name: String,
-        ok: bool,
-        output: String,
-    },
-    /// turn 终态:终答全文或错误。
-    Done(Result<String, AgentError>),
-}
-
 /// agent 循环错误。
 #[derive(Debug, thiserror::Error)]
 pub enum AgentError {
@@ -81,14 +66,16 @@ pub enum AgentError {
     MaxSteps(usize),
     #[error("llm failed: {0}")]
     Llm(String),
+    #[error("tool pipeline failed: {0}")]
+    Pipeline(String),
 }
 
 /// 多轮 agent 接口(dsh Agent 的多轮内核裁剪:保留 id/status/session/
 /// followup/cancel,裁掉 inbox 排队 / steer / fork / resume / 维护调度)。
 ///
-/// `followup` 返回 `BoxStream<TurnEvent>` 而非 `Result<String>`——流式是
-/// 第一性需求(TUI 逐字输出);非流式调用方收集 `TextDelta` 拼合即可,
-/// 终答从 `TurnEvent::Done` 取。
+/// `followup` 只负责"触发 turn + 回传终态";过程增量(text/tool/状态)
+/// 经 EventBus 的 `agent/*` 事件广播,不独占返回——观察方(TUI/日志/
+/// 其他前端)订阅事件,不调 followup 拿流。
 pub trait Agent: Send + Sync + 'static {
     /// 与 session 共享的身份。
     fn id(&self) -> SessionId;
@@ -96,9 +83,9 @@ pub trait Agent: Send + Sync + 'static {
     fn status(&self) -> AgentStatus;
     /// session 快照(driver 内部持锁拷贝;`messages()` 只读)。
     fn session(&self) -> SessionSnapshot;
-    /// 提交一条用户消息:push 进 session,驱动一个 turn。
-    /// 返回该 turn 的事件流(懒执行:消费才推进)。
-    fn followup<'a>(&'a self, input: &'a str) -> BoxStream<'a, TurnEvent>;
+    /// 提交一条用户消息:push 进 session,驱动一个 turn,返回终态。
+    fn followup<'a>(&'a self, input: &'a str)
+        -> BoxFuture<'a, Result<String, AgentError>>;
     /// 中断当前 turn;session(history)保留,下次 followup 继续。
     fn cancel(&self);
 }

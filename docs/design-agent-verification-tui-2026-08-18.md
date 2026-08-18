@@ -45,26 +45,29 @@ let a2 = agent.followup("and in Bergen?").await?;   // history 连续
 ### 技术选型
 
 - **ratatui + crossterm**:Rust TUI 事实标准,跨平台,与 tokio 集成成熟。当前 crate 无 TUI 依赖,新增这两个。
-- **aimux `do_stream` 流式**:`followup` 返回 `BoxStream<TurnEvent>`(见设计文档 §3),`TextDelta` 逐块到达。**流式是首版需求**,TUI 逐字输出。
+- **aimux `do_stream` 流式**:driver 循环内 `do_stream` 产 `TextDelta`,逐块 `emit` 到 `AgentTextDelta` 事件(见设计文档 §3/4.1)。TUI 订阅该事件逐字输出。**流式是首版需求**,经 EventBus 广播。
 
 ### 交互模型:一个 TUI 前端插件 + agent 服务
 
-TUI 是个**消费 `Agent` 服务的前端**,不是 loop 的一部分。它自己是个 fiber(生命周期由框架管):
+TUI 是个**消费 `agent/*` 事件的前端 fiber**,不直接对接 `followup` 的 stream。它订阅事件渲染,输入经 `followup` 触发:
 
 ```
 ┌─ TuiPlugin(fiber)──────────────────────────┐
-│ 输入行:读用户输入 → agent.followup(text)     │
-│ 显示区:订阅 agent/* 事件 + 流式 TextDelta    │
+│ 输入行:Enter → agent.followup(text)(触发 turn)│
+│ 显示区:on(AgentTextDelta/AgentToolCall/       │
+│        AgentToolResult)逐块渲染(订阅事件)      │
 │ 状态栏:agent.status(idle/running)           │
 └─────────────────────────────────────────────┘
         ↓ 依赖(injects)
   agent 服务(AgentDriverPlugin)
 ```
 
-- **输入** → `agent.followup(input)` 返回 `BoxStream<TurnEvent>`,逐块消费;
-- **显示** → 消费 `TurnEvent::TextDelta`(逐字)/ `ToolCall` / `ToolResult`;`agent/*` 事件作辅助观察;
+- **输入** → `agent.followup(input)` 触发 turn(返回终态,不取过程);
+- **显示** → 订阅 `AgentTextDelta`(逐字)/ `AgentToolCall` / `AgentToolResult` 事件渲染——**过程全靠 EventBus 广播,不独占 stream**;
 - **取消** → Esc/Ctrl+C 触发 `agent.cancel()`(中断当前 turn,history 保留);
-- **退出** → 卸载 TUI fiber,级联停 driver。
+- **退出** → 卸载 TUI fiber,级联停 driver;监听器随 fiber 卸载(D28)。
+
+**为什么走事件不走 stream**:输出是广播不是独占——一次 turn 可被多方观察(TUI + 日志 + 未来前端),TUI 可晚订阅、只看不动;TUI 与 driver 解耦,不持有独占 stream;监听器随 fiber 卸载,生命周期框架管。
 
 ### 最小 TUI 界面(三栏)
 
@@ -84,22 +87,23 @@ TUI 是个**消费 `Agent` 服务的前端**,不是 loop 的一部分。它自�
 ### 最小交互闭环(对应 dsh turn flow 的裁剪)
 
 ```
-用户输入 → agent.followup(input) 得 BoxStream<TurnEvent>
+用户输入 → agent.followup(input)(触发,返回终态)
   → session.push(user)
-  → loop: llm stream
-        → TextDelta 逐块 → TUI 逐字显示
-        → ToolCall → TUI 显示 "⚙ 工具名(参数)" → 执行 → ToolResult 显示
-        → 无 tool_call → Done(终答文本)
+  → loop: agent/pre-step waterfall(改写/拒绝 messages)→ llm stream
+        → TextDelta 逐块 emit AgentTextDelta → TUI 逐字显示
+        → ToolCall 经三段(pre-execute 门控 → execute 执行 → post-execute 决策)
+        → emit AgentToolCall/AgentToolResult → TUI 显示
+        → 无 tool_call → 终答 → emit AgentTurnEnd
   → status: running → idle
   → 等待下一次输入
 ```
 
-这对应 dsh 的 turn flow,但裁掉 `agent/pre-step` 重写、inbox 排队、steer——最小 TUI 要"输入→流式逐字→工具可见→取消",**流式逐字是首版需求**。
+这对应 dsh 的 turn flow:`agent/pre-step`、工具三段 `pre-execute`/`execute`/`post-execute` 是 waterfall(可改写/veto/决策),过程增量经 `agent/*` 事件广播。裁掉 `agent/request` 模型路由(M4)、inbox 排队、steer——最小 TUI 要"输入→流式逐字→工具可见→取消",**流式逐字是首版需求,经事件广播**。
 
 ### 不做什么(边界)
 
 - 不做多 agent 切换、不做会话持久化恢复、不做命令系统(`/clear` 等)、不做 markdown 渲染/语法高亮、不做鼠标。
-- 流式进首版;`agent/*` 事件作辅助观察通道(ToolCall/ToolResult 也经 TurnEvent 流给 TUI,事件用于其他观察方)。
+- 流式进首版,经 EventBus 广播;`agent/*` 事件是唯一观察通道(TUI 与其他观察方共用),不再有 followup 独占 stream。
 
 ## 三、落地顺序
 

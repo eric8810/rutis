@@ -12,9 +12,11 @@
 use std::sync::Arc;
 
 use aimux_core::language_model::LanguageModel;
-use futures::StreamExt;
-use rutis::Ctx;
-use rutis_agent::{agent_key, llm_key, Agent, AgentDriverPlugin, ToolDef, ToolsPlugin, TurnEvent};
+use rutis::{BoxFuture, CordisError, Ctx};
+use rutis_agent::{
+    agent_key, llm_key, Agent, AgentDriverPlugin, AgentTextDelta, AgentToolCall, AgentToolResult,
+    ToolDef, ToolsPlugin,
+};
 use serde_json::{json, Value};
 
 fn weather_tool() -> ToolDef {
@@ -30,32 +32,55 @@ fn weather_tool() -> ToolDef {
     )
 }
 
-/// 打印一个 turn 的事件流(流式逐块)。
+/// 注册 turn 过程打印监听器(流式逐块经 `agent/*` 事件到达),返终态跑一轮。
 async fn run_turn(agent: &Arc<dyn Agent>, input: &str) {
     println!("you> {input}");
-    let mut stream = agent.followup(input);
-    while let Some(ev) = stream.next().await {
-        match ev {
-            TurnEvent::TextDelta(d) => print!("{d}"),
-            TurnEvent::ToolCall { name, args } => println!("\n⚙ {name}({args})"),
-            TurnEvent::ToolResult { name, ok, output } => {
-                println!(
-                    "  → [{name}] {}",
-                    if ok {
-                        output
-                    } else {
-                        format!("FAILED: {output}")
-                    }
-                )
-            }
-            TurnEvent::Done(Ok(_)) => println!(),
-            TurnEvent::Done(Err(e)) => println!("! {e}"),
-        }
+    match agent.followup(input).await {
+        Ok(_) => println!(),
+        Err(e) => println!("! {e}"),
     }
 }
 
+// ── 打印监听器(fn 项:省略生命周期满足 Listener 的 for<'a> blanket impl)──
+
+fn print_delta<'a>(_ctx: &'a Ctx, e: &'a AgentTextDelta) -> BoxFuture<'a, Result<Option<()>, CordisError>> {
+    let d = e.delta.clone();
+    Box::pin(async move {
+        use std::io::Write as _;
+        print!("{d}");
+        let _ = std::io::stdout().flush();
+        Ok(None)
+    })
+}
+
+fn print_tool_call<'a>(
+    _ctx: &'a Ctx,
+    e: &'a AgentToolCall,
+) -> BoxFuture<'a, Result<Option<()>, CordisError>> {
+    let s = format!("\n⚙ {}({})", e.name, e.args);
+    Box::pin(async move {
+        println!("{s}");
+        Ok(None)
+    })
+}
+
+fn print_tool_result<'a>(
+    _ctx: &'a Ctx,
+    e: &'a AgentToolResult,
+) -> BoxFuture<'a, Result<Option<()>, CordisError>> {
+    let s = if e.ok {
+        format!("  → [{}] {}", e.name, e.output)
+    } else {
+        format!("  → [{}] FAILED: {}", e.name, e.output)
+    };
+    Box::pin(async move {
+        println!("{s}");
+        Ok(None)
+    })
+}
+
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), CordisError> {
     let provider = std::env::var("AIMUX_PROVIDER").unwrap_or_else(|_| "deepseek".into());
     let model_id = std::env::var("AIMUX_MODEL").unwrap_or_else(|_| "deepseek-chat".into());
     let model = aimux_providers::provider(&provider, None, &model_id, None)
@@ -63,6 +88,12 @@ async fn main() {
     let llm: Arc<dyn LanguageModel> = Arc::from(model);
 
     let root = Ctx::root().expect("run inside a tokio runtime");
+
+    // 过程增量观察方:订阅 agent/* 事件,逐块打印(归 root 所有,demo 全程有效)
+    let _delta = root.events().on(&root, print_delta)?;
+    let _tool_call = root.events().on(&root, print_tool_call)?;
+    let _tool_result = root.events().on(&root, print_tool_result)?;
+
     // LLM 服务直接 provide(设计 §六:无 LlmPlugin 空壳)
     let llm_disposer = root
         .provide_as(llm_key(), llm)
@@ -95,4 +126,5 @@ async fn main() {
     driver_view.dispose().await.unwrap();
     tools_view.dispose().await.unwrap();
     println!("unloaded cleanly");
+    Ok(())
 }

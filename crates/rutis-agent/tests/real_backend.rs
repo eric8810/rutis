@@ -5,12 +5,15 @@
 //! cargo test -p rutis-agent --test real_backend -- --ignored
 //! ```
 
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use aimux_core::language_model::LanguageModel;
-use futures::StreamExt;
 use rutis::Ctx;
-use rutis_agent::{agent_key, llm_key, Agent, AgentDriverPlugin, ToolDef, ToolsPlugin, TurnEvent};
+use rutis_agent::{
+    agent_key, llm_key, Agent, AgentDriverPlugin, AgentTextDelta, AgentToolCall, ToolDef,
+    ToolsPlugin,
+};
 use serde_json::{json, Value};
 
 fn weather_tool() -> ToolDef {
@@ -25,15 +28,50 @@ fn weather_tool() -> ToolDef {
     )
 }
 
-async fn run_turn(agent: &Arc<dyn Agent>, input: &str) -> String {
-    let mut text = String::new();
-    let mut stream = agent.followup(input);
-    while let Some(ev) = stream.next().await {
-        if let TurnEvent::TextDelta(d) = ev {
-            text.push_str(&d);
-        }
+/// 收集 `AgentTextDelta` 的 listener:拼接增量进共享缓冲。
+struct TextL(Arc<Mutex<String>>);
+impl rutis::Listener<AgentTextDelta> for TextL {
+    fn call<'a>(
+        &'a self,
+        _ctx: &'a Ctx,
+        e: &'a AgentTextDelta,
+    ) -> rutis::BoxFuture<'a, Result<Option<()>, rutis::CordisError>> {
+        let text = self.0.clone();
+        let d = e.delta.clone();
+        Box::pin(async move {
+            text.lock().unwrap().push_str(&d);
+            Ok(None)
+        })
     }
-    text
+}
+
+/// 见到 `get_weather` 工具调用即置位的 listener。
+struct ToolFlagL(Arc<AtomicBool>);
+impl rutis::Listener<AgentToolCall> for ToolFlagL {
+    fn call<'a>(
+        &'a self,
+        _ctx: &'a Ctx,
+        e: &'a AgentToolCall,
+    ) -> rutis::BoxFuture<'a, Result<Option<()>, rutis::CordisError>> {
+        let flag = self.0.clone();
+        let name = e.name.clone();
+        Box::pin(async move {
+            if name == "get_weather" {
+                flag.store(true, Ordering::SeqCst);
+            }
+            Ok(None)
+        })
+    }
+}
+
+/// 跑一个 turn,返回拼接增量文本(终态断言在调用侧)。
+async fn run_turn(root: &Ctx, agent: &Arc<dyn Agent>, input: &str) -> String {
+    let text = Arc::new(Mutex::new(String::new()));
+    let _d = root.events().on(root, TextL(text.clone())).unwrap();
+    let result = agent.followup(input).await.expect("turn ok");
+    drop(result);
+    let collected = text.lock().unwrap().clone();
+    collected
 }
 
 fn backend() -> Arc<dyn LanguageModel> {
@@ -63,25 +101,26 @@ async fn real_backend_multi_turn_with_tool() {
     (&driver_view).await.expect("driver loads");
     let agent = root.get_as::<dyn Agent>(agent_key()).unwrap();
 
-    // 第一轮:期望模型调用 get_weather
-    let mut saw_tool = false;
-    let mut stream = agent.followup("What's the weather in Oslo? Use the get_weather tool.");
-    let mut a1 = String::new();
-    while let Some(ev) = stream.next().await {
-        match ev {
-            TurnEvent::TextDelta(d) => a1.push_str(&d),
-            TurnEvent::ToolCall { name, .. } if name == "get_weather" => saw_tool = true,
-            _ => {}
-        }
-    }
+    // 第一轮:期望模型调用 get_weather(经 agent/tool-call 事件观察)
+    let saw_tool = Arc::new(AtomicBool::new(false));
+    let _tool_l = root
+        .events()
+        .on(&root, ToolFlagL(saw_tool.clone()))
+        .unwrap();
+    let a1 = run_turn(
+        &root,
+        &agent,
+        "What's the weather in Oslo? Use the get_weather tool.",
+    )
+    .await;
     assert!(
-        saw_tool,
+        saw_tool.load(Ordering::SeqCst),
         "expected a get_weather tool call, answer was: {a1}"
     );
     assert!(!a1.is_empty(), "final answer empty");
 
     // 第二轮:history 连续(模型能指代第一轮)
-    let a2 = run_turn(&agent, "And in Bergen?").await;
+    let a2 = run_turn(&root, &agent, "And in Bergen?").await;
     assert!(!a2.is_empty(), "second turn empty");
     assert!(agent.session().messages().len() >= 5); // u1,a1,u2,a2 + 工具往返
 }

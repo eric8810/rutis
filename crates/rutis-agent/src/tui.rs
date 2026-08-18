@@ -1,7 +1,8 @@
-//! TUI 前端插件(验证文档 §二)——消费 `Agent` 服务,不是 loop 的一部分。
+//! TUI 前端插件(验证文档 §二)——`agent/*` 事件监听器,不是 loop 的一部分。
 //!
-//! - 输入行:Enter 提交 → `agent.followup(text)` 流式消费
-//! - 对话区:`TextDelta` 逐字追加,`ToolCall`/`ToolResult` 可见
+//! - 输入行:Enter 提交 → `agent.followup(text)` 触发 turn(返回终态)
+//! - 对话区:订阅 `AgentTextDelta`/`AgentToolCall`/`AgentToolResult` 渲染
+//!   (过程全靠 EventBus 广播,不独占 stream)
 //! - 状态栏:idle | running
 //! - Esc / Ctrl+C(运行中)取消当前 turn;Ctrl+Q 退出(卸载 TUI fiber)
 //!
@@ -23,11 +24,21 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 use ratatui::{Frame, Terminal};
-use rutis::{BoxFuture, CordisError, Ctx, Effect, Plugin, TypeKey};
+use rutis::{BoxFuture, CordisError, Ctx, Effect, Listener, Plugin, TypeKey};
 use tokio::runtime::Handle;
 use tokio::sync::mpsc;
 
-use crate::agent::{Agent, TurnEvent};
+use crate::agent::Agent;
+use crate::events::{AgentTextDelta, AgentToolCall, AgentToolResult, AgentTurnEnd};
+
+/// TUI 渲染事件(监听器转发进 UI 通道;借用在监听器调用内拷贝)。
+#[derive(Debug, Clone)]
+enum UiEvent {
+    TextDelta(String),
+    ToolCall { name: String, args: String },
+    ToolResult { name: String, ok: bool, output: String },
+    TurnEnd { ok: bool, error: String },
+}
 
 /// TUI 前端插件:`injects = [agent]`,依赖 agent 服务(dual gating 之上再门控)。
 pub struct TuiPlugin {
@@ -95,9 +106,9 @@ impl App {
         )));
     }
 
-    fn on_turn_event(&mut self, ev: TurnEvent) {
+    fn on_ui_event(&mut self, ev: UiEvent) {
         match ev {
-            TurnEvent::TextDelta(delta) => match self.cur_assistant {
+            UiEvent::TextDelta(delta) => match self.cur_assistant {
                 Some(idx) => self.transcript[idx].spans.push(Span::raw(delta)),
                 None => {
                     self.transcript.push(Line::from(vec![
@@ -107,14 +118,14 @@ impl App {
                     self.cur_assistant = Some(self.transcript.len() - 1);
                 }
             },
-            TurnEvent::ToolCall { name, args } => {
+            UiEvent::ToolCall { name, args } => {
                 self.tool_count += 1;
                 self.push_line(Line::from(Span::styled(
                     format!("* {name}({args})"),
                     Style::default().fg(Color::Cyan),
                 )));
             }
-            TurnEvent::ToolResult { name, ok, output } => {
+            UiEvent::ToolResult { name, ok, output } => {
                 let style = if ok {
                     Style::default().fg(Color::DarkGray)
                 } else {
@@ -125,13 +136,13 @@ impl App {
                     style,
                 )));
             }
-            TurnEvent::Done(Ok(_)) => {
+            UiEvent::TurnEnd { ok: true, .. } => {
                 self.running = false;
                 self.tool_count = 0;
             }
-            TurnEvent::Done(Err(e)) => {
+            UiEvent::TurnEnd { ok: false, error } => {
                 self.push_line(Line::from(Span::styled(
-                    format!("! {e}"),
+                    format!("! {error}"),
                     Style::default().fg(Color::Red),
                 )));
                 self.running = false;
@@ -157,7 +168,6 @@ impl App {
         key: crossterm::event::KeyEvent,
         agent: &Arc<dyn Agent>,
         handle: &Handle,
-        turn_tx: &mpsc::Sender<TurnEvent>,
     ) -> bool {
         match (key.code, key.modifiers) {
             (KeyCode::Char('q'), KeyModifiers::CONTROL) => return true,
@@ -169,13 +179,11 @@ impl App {
                     self.submit(&input);
                     self.running = true;
                     let agent = agent.clone();
-                    let turn_tx = turn_tx.clone();
                     handle.spawn(async move {
-                        let mut stream = agent.followup(&input);
-                        while let Some(ev) = stream.next().await {
-                            if turn_tx.send(ev).await.is_err() {
-                                break;
-                            }
+                        // followup 只触发 turn + 回传终态;
+                        // 过程增量已由 driver emit 到 agent/* 事件
+                        if let Err(e) = agent.followup(&input).await {
+                            eprintln!("turn failed: {e}");
                         }
                     });
                 }
@@ -187,6 +195,86 @@ impl App {
             _ => {}
         }
         false
+    }
+}
+
+// ── 事件 → UI 通道监听器(归 TUI fiber 所有,D28)─────────────────────
+
+/// `AgentTextDelta` → UI。
+struct DeltaL(mpsc::Sender<UiEvent>);
+impl Listener<AgentTextDelta> for DeltaL {
+    fn call<'a>(
+        &'a self,
+        _ctx: &'a Ctx,
+        e: &'a AgentTextDelta,
+    ) -> BoxFuture<'a, Result<Option<()>, CordisError>> {
+        let tx = self.0.clone();
+        let ev = UiEvent::TextDelta(e.delta.clone());
+        Box::pin(async move {
+            let _ = tx.send(ev).await;
+            Ok(None)
+        })
+    }
+}
+
+/// `AgentToolCall` → UI。
+struct ToolCallL(mpsc::Sender<UiEvent>);
+impl Listener<AgentToolCall> for ToolCallL {
+    fn call<'a>(
+        &'a self,
+        _ctx: &'a Ctx,
+        e: &'a AgentToolCall,
+    ) -> BoxFuture<'a, Result<Option<()>, CordisError>> {
+        let tx = self.0.clone();
+        let ev = UiEvent::ToolCall {
+            name: e.name.clone(),
+            args: e.args.to_string(),
+        };
+        Box::pin(async move {
+            let _ = tx.send(ev).await;
+            Ok(None)
+        })
+    }
+}
+
+/// `AgentToolResult` → UI。
+struct ToolResultL(mpsc::Sender<UiEvent>);
+impl Listener<AgentToolResult> for ToolResultL {
+    fn call<'a>(
+        &'a self,
+        _ctx: &'a Ctx,
+        e: &'a AgentToolResult,
+    ) -> BoxFuture<'a, Result<Option<()>, CordisError>> {
+        let tx = self.0.clone();
+        let ev = UiEvent::ToolResult {
+            name: e.name.clone(),
+            ok: e.ok,
+            output: e.output.clone(),
+        };
+        Box::pin(async move {
+            let _ = tx.send(ev).await;
+            Ok(None)
+        })
+    }
+}
+
+/// `AgentTurnEnd` → UI(兜底:followup 任务的返回值之外,turn 状态也经事件)。
+struct TurnEndL(mpsc::Sender<UiEvent>);
+impl Listener<AgentTurnEnd> for TurnEndL {
+    fn call<'a>(
+        &'a self,
+        _ctx: &'a Ctx,
+        e: &'a AgentTurnEnd,
+    ) -> BoxFuture<'a, Result<Option<()>, CordisError>> {
+        let tx = self.0.clone();
+        let ev = UiEvent::TurnEnd {
+            ok: e.ok,
+            error: e.error.clone(),
+        };
+        Box::pin(async move {
+            let _ = tx.send(ev).await;
+            Ok(None)
+        })
     }
 }
 
@@ -306,7 +394,7 @@ impl Plugin for TuiPlugin {
                 .map_err(|e| CordisError::PluginFailed(format!("tui terminal: {e}").into()))?;
 
             let (input_tx, mut input_rx) = mpsc::channel::<CrosstermEvent>(16);
-            let (turn_tx, mut turn_rx) = mpsc::channel::<TurnEvent>(64);
+            let (ui_tx, mut ui_rx) = mpsc::channel::<UiEvent>(256);
             // 输入读取任务:退出时 abort
             let input_task = ctx.handle().spawn(async move {
                 let mut events = EventStream::new();
@@ -316,6 +404,12 @@ impl Plugin for TuiPlugin {
                     }
                 }
             });
+
+            // agent/* 事件订阅:监听器归本 fiber 所有,随 fiber 卸载(D28)
+            ctx.events().on(ctx, DeltaL(ui_tx.clone()))?;
+            ctx.events().on(ctx, ToolCallL(ui_tx.clone()))?;
+            ctx.events().on(ctx, ToolResultL(ui_tx.clone()))?;
+            ctx.events().on(ctx, TurnEndL(ui_tx.clone()))?;
 
             let mut app = App::default();
             for line in &self.intro {
@@ -336,14 +430,14 @@ impl Plugin for TuiPlugin {
                     ev = input_rx.recv() => {
                         let Some(CrosstermEvent::Key(key)) = ev else { continue };
                         if key.kind == KeyEventKind::Press
-                            && app.handle_key(key, &agent, ctx.handle(), &turn_tx)
+                            && app.handle_key(key, &agent, ctx.handle())
                         {
                             break Ok(());
                         }
                     }
-                    ev = turn_rx.recv() => {
+                    ev = ui_rx.recv() => {
                         if let Some(ev) = ev {
-                            app.on_turn_event(ev);
+                            app.on_ui_event(ev);
                         }
                     }
                 }

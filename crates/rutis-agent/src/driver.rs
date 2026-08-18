@@ -1,9 +1,11 @@
 //! AgentDriver——循环本体 + `AgentDriverPlugin` 装配(设计 §三.4/§三.5)。
 //!
-//! 循环写在 `followup` 内部:感知(`session.messages()`)→ 思考
-//! (`llm.do_stream`,流式)→ 行动(`tools.execute`)→ 观察(回写
-//! session + `agent/*` 事件),逐步检查取消。session 是唯一事实源:
-//! 流式 TextDelta 一边转发前端、一边累积进 assistant 消息回写 session。
+//! 循环写在 `run_loop` 内部:感知(`session.messages()`,前置
+//! `agent/pre-step` waterfall 可改写/拒绝)→ 思考(`llm.do_stream`,流式)
+//! → 行动(工具三段 `tools/pre-execute` 门控 → 执行 → `tools/post-execute`
+//! 结果决策)→ 观察(增量 emit 到 `agent/*` 事件广播 + 回写 session),
+//! 逐步检查取消。session 是唯一事实源;过程增量经事件广播,不独占
+//! stream——`followup` 只触发 turn + 回传终态。
 
 use std::sync::{Arc, Mutex};
 
@@ -15,12 +17,15 @@ use aimux_core::message::{MessageContent, ModelMessage, Role};
 use aimux_core::options::CallOptions;
 use aimux_core::stream_part::StreamPart;
 use aimux_core::tool::ToolCall;
-use futures::stream::BoxStream;
 use futures::StreamExt;
-use rutis::{BoxFuture, CordisError, Ctx, Effect, Event, Plugin, TypeKey};
+use rutis::{BoxFuture, CordisError, Ctx, Effect, Plugin, TypeKey};
 use tokio_util::sync::CancellationToken;
 
-use crate::agent::{Agent, AgentError, AgentStatus, SessionSnapshot, StatusCell, TurnEvent};
+use crate::agent::{Agent, AgentError, AgentStatus, SessionSnapshot, StatusCell};
+use crate::events::{
+    AgentPreStep, AgentStepEvent, AgentTextDelta, AgentToolCall, AgentToolResult, AgentTurnEnd,
+    PreStepDecision, ToolPostExecute, ToolPreExecute,
+};
 use crate::session::{Session, SessionId};
 use crate::tools::{ToolOutput, ToolRegistry};
 use crate::{agent_key, tools_key};
@@ -29,37 +34,6 @@ use crate::{agent_key, tools_key};
 pub fn llm_key() -> TypeKey {
     TypeKey::of::<dyn LanguageModel>()
 }
-
-// ── 事件(总线可观测性;监听器归注册方 fiber 所有,D28)──────────────
-
-/// 每步模型响应后发布:步号、内容、工具调用数。
-#[derive(Debug, Clone)]
-pub struct AgentStepEvent {
-    pub step: usize,
-    pub content: Option<String>,
-    pub tool_calls: usize,
-}
-
-impl Event for AgentStepEvent {
-    const NAME: &'static str = "agent/step";
-    type Value = ();
-}
-
-/// 每次工具调用后发布:名称、参数、成败、输出。
-#[derive(Debug, Clone)]
-pub struct AgentToolEvent {
-    pub name: String,
-    pub arguments: serde_json::Value,
-    pub ok: bool,
-    pub output: String,
-}
-
-impl Event for AgentToolEvent {
-    const NAME: &'static str = "agent/tool";
-    type Value = ();
-}
-
-// ── driver 本体 ────────────────────────────────────────────────────
 
 /// agent 循环 driver:实现 [`Agent`] 接口,由 [`AgentDriverPlugin`] 装配。
 ///
@@ -75,6 +49,35 @@ pub struct AgentDriver {
     max_steps: usize,
     /// system prompt(minimal mode persona 等);None = 无 system 消息。
     system_prompt: Option<String>,
+}
+
+/// `tools/pre-execute` 终态续延:放行。
+fn pre_execute_default<'a>(
+    _ctx: &'a Ctx,
+    _e: &'a ToolPreExecute,
+) -> BoxFuture<'a, Result<Option<String>, CordisError>> {
+    Box::pin(async { Ok(None) })
+}
+
+/// `tools/post-execute` 终态续延:原样 accept。
+fn post_execute_default<'a>(
+    _ctx: &'a Ctx,
+    e: &'a ToolPostExecute,
+) -> BoxFuture<'a, Result<ToolOutput, CordisError>> {
+    Box::pin(async {
+        Ok(ToolOutput {
+            ok: e.ok,
+            output: e.output.clone(),
+        })
+    })
+}
+
+/// `agent/pre-step` 终态续延:原样放行。
+fn pre_step_default<'a>(
+    _ctx: &'a Ctx,
+    e: &'a AgentPreStep,
+) -> BoxFuture<'a, Result<PreStepDecision, CordisError>> {
+    Box::pin(async { Ok(Ok((e.prompt.clone(), e.tools.clone()))) })
 }
 
 impl AgentDriver {
@@ -103,31 +106,250 @@ impl AgentDriver {
         token
     }
 
-    fn emit_step(&self, step: usize, content: &str, tool_calls: usize) {
+    fn emit_delta(&self, session: SessionId, step: usize, delta: String) {
         self.ctx.events().emit(
             &self.ctx,
-            Arc::new(AgentStepEvent {
+            Arc::new(AgentTextDelta {
+                session,
                 step,
-                content: if content.is_empty() {
-                    None
-                } else {
-                    Some(content.to_string())
-                },
-                tool_calls,
+                delta,
             }),
         );
     }
 
-    fn emit_tool(&self, call: &ToolCall, out: &ToolOutput) {
+    fn emit_step(&self, session: SessionId, step: usize, content: Option<String>, calls: usize) {
         self.ctx.events().emit(
             &self.ctx,
-            Arc::new(AgentToolEvent {
-                name: call.tool_name.clone(),
-                arguments: call.input.clone(),
+            Arc::new(AgentStepEvent {
+                session,
+                step,
+                content,
+                tool_calls: calls,
+            }),
+        );
+    }
+
+    fn emit_tool_call(&self, session: SessionId, name: &str, args: &serde_json::Value) {
+        self.ctx.events().emit(
+            &self.ctx,
+            Arc::new(AgentToolCall {
+                session,
+                name: name.to_string(),
+                args: args.clone(),
+            }),
+        );
+    }
+
+    fn emit_tool_result(&self, session: SessionId, name: &str, out: &ToolOutput) {
+        self.ctx.events().emit(
+            &self.ctx,
+            Arc::new(AgentToolResult {
+                session,
+                name: name.to_string(),
                 ok: out.ok,
                 output: out.output.clone(),
             }),
         );
+    }
+
+    fn emit_turn_end(&self, session: SessionId, result: &Result<String, AgentError>) {
+        self.ctx.events().emit(
+            &self.ctx,
+            Arc::new(AgentTurnEnd {
+                session,
+                ok: result.is_ok(),
+                error: match result {
+                    Ok(_) => String::new(),
+                    Err(e) => e.to_string(),
+                },
+            }),
+        );
+    }
+
+    /// 工具三段管线(设计 §四.1):`tools/pre-execute` 门控 → 执行 →
+    /// `tools/post-execute` 结果决策。失败(含拒绝)都转模型可见的
+    /// `error: ...` 结果回喂,循环继续。
+    async fn run_tool(
+        &self,
+        session: SessionId,
+        call: &ToolCall,
+        token: &CancellationToken,
+    ) -> ToolOutput {
+        self.emit_tool_call(session, &call.tool_name, &call.input);
+
+        // ① tools/pre-execute:执行前门控(拒绝或放行;默认放行;
+        //    管线自身失败按拒绝处理——门控 fail closed)
+        let gate: Option<String> = self
+            .ctx
+            .events()
+            .waterfall(
+                &self.ctx,
+                &ToolPreExecute {
+                    session,
+                    call: call.clone(),
+                },
+                pre_execute_default,
+            )
+            .await
+            .unwrap_or_else(|e| Some(e.to_string()));
+        if let Some(reason) = gate {
+            return ToolOutput::err(format!("error: tool execution rejected: {reason}"));
+        }
+
+        // ② 执行:ToolRegistry 内置 panic 任务边界与取消(评审 #13/P2)
+        let out = self.tools.execute(call, token).await;
+
+        // ③ tools/post-execute:结果决策(accept/replace;失败也到这,
+        //    默认原样 accept)
+        let out = self
+            .ctx
+            .events()
+            .waterfall(
+                &self.ctx,
+                &ToolPostExecute {
+                    session,
+                    call: call.clone(),
+                    ok: out.ok,
+                    output: out.output,
+                },
+                post_execute_default,
+            )
+            .await
+            .unwrap_or_else(|e| ToolOutput::err(format!("error: {e}")));
+
+        self.emit_tool_result(session, &call.tool_name, &out);
+        out
+    }
+
+    /// 一个 turn 的完整循环;过程增量经事件广播,返回终态。
+    async fn run_loop(&self, token: &CancellationToken) -> Result<String, AgentError> {
+        let session = self.id();
+        let mut step = 0usize;
+        loop {
+            if token.is_cancelled() {
+                return Err(AgentError::Stopped);
+            }
+            if step >= self.max_steps {
+                return Err(AgentError::MaxSteps(self.max_steps));
+            }
+            step += 1;
+
+            // 思考:从 session 取全量 history(persona 经 instructions 前置)
+            let prompt = convert_to_language_model_prompt(
+                self.session.lock().unwrap().messages(),
+                self.system_prompt.as_deref(),
+            );
+            let tools = self.tools.schemas();
+
+            // ── agent/pre-step waterfall:改写/拒绝进入这步(默认原样)──
+            let (prompt, tools) = self
+                .ctx
+                .events()
+                .waterfall(
+                    &self.ctx,
+                    &AgentPreStep {
+                        session,
+                        step,
+                        prompt: prompt.clone(),
+                        tools: tools.clone(),
+                    },
+                    pre_step_default,
+                )
+                .await
+                .map_err(|e| AgentError::Pipeline(e.to_string()))?
+                .map_err(AgentError::Pipeline)?;
+
+            let mut result = self
+                .llm
+                .do_stream(&CallOptions {
+                    prompt,
+                    tools: Some(tools),
+                    ..CallOptions::default()
+                })
+                .await
+                .map_err(|e| AgentError::Llm(e.to_string()))?;
+
+            // 观察:逐块收 TextDelta emit 广播,同时累积 assistant 内容
+            let mut text = String::new();
+            let mut calls: Vec<ToolCall> = Vec::new();
+            let mut failure: Option<AgentError> = None;
+            loop {
+                let chunk = tokio::select! {
+                    _ = token.cancelled() => Chunk::Cancelled,
+                    part = result.stream.next() => match part {
+                        None => Chunk::End,
+                        Some(p) => Chunk::Part(p),
+                    },
+                };
+                match chunk {
+                    Chunk::Cancelled => {
+                        failure = Some(AgentError::Stopped);
+                        break;
+                    }
+                    Chunk::End => break,
+                    Chunk::Part(Ok(StreamPart::TextDelta { delta, .. })) => {
+                        text.push_str(&delta);
+                        self.emit_delta(session, step, delta);
+                    }
+                    Chunk::Part(Ok(StreamPart::ToolCall {
+                        tool_call_id,
+                        tool_name,
+                        input,
+                        ..
+                    })) => {
+                        calls.push(ToolCall {
+                            tool_call_id,
+                            tool_name,
+                            input,
+                            provider_executed: None,
+                            dynamic: None,
+                            thought_signature: None,
+                        });
+                    }
+                    Chunk::Part(Ok(StreamPart::Error { error })) => {
+                        failure = Some(AgentError::Llm(error.to_string()));
+                        break;
+                    }
+                    Chunk::Part(Ok(_)) => {}
+                    Chunk::Part(Err(e)) => {
+                        failure = Some(AgentError::Llm(e.to_string()));
+                        break;
+                    }
+                }
+            }
+            if let Some(e) = failure {
+                return Err(e);
+            }
+
+            // assistant 回写 session(session 是事实源,事件是广播)
+            self.session
+                .lock()
+                .unwrap()
+                .push(assistant_message(&text, &calls));
+            self.emit_step(
+                session,
+                step,
+                if text.is_empty() {
+                    None
+                } else {
+                    Some(text.clone())
+                },
+                calls.len(),
+            );
+
+            if calls.is_empty() {
+                return Ok(text); // 终答
+            }
+
+            // 行动 + 观察:工具三段管线,失败回喂,循环继续
+            for call in calls {
+                let out = self.run_tool(session, &call, token).await;
+                self.session
+                    .lock()
+                    .unwrap()
+                    .push(tool_result_message(&call, &out));
+            }
+        }
     }
 }
 
@@ -166,7 +388,7 @@ fn tool_result_message(call: &ToolCall, out: &ToolOutput) -> ModelMessage {
     }
 }
 
-/// 流消费期间 select 的结果(cancel 不能驻留在 select 臂内 yield)。
+/// 流消费期间 select 的结果。
 /// select 瞬时值,无热循环驻留,大变体不值得装箱分配。
 #[allow(clippy::large_enum_variant)]
 enum Chunk {
@@ -193,119 +415,16 @@ impl Agent for AgentDriver {
         self.cancel.lock().unwrap().cancel();
     }
 
-    fn followup<'a>(&'a self, input: &'a str) -> BoxStream<'a, TurnEvent> {
-        Box::pin(async_stream::stream! {
+    fn followup<'a>(&'a self, input: &'a str) -> BoxFuture<'a, Result<String, AgentError>> {
+        Box::pin(async move {
             // 感知起点:用户消息进 session,turn 用全新取消令牌
             self.session.lock().unwrap().push(ModelMessage::user(input));
             let token = self.fresh_turn_token();
             self.status.set(AgentStatus::Running);
-
-            let mut step = 0usize;
-            let outcome = loop {
-                if token.is_cancelled() {
-                    break Err(AgentError::Stopped);
-                }
-                if step >= self.max_steps {
-                    break Err(AgentError::MaxSteps(self.max_steps));
-                }
-                step += 1;
-
-                // 思考:从 session 取全量 history(persona 经 instructions 前置),流式调 aimux
-                let prompt = convert_to_language_model_prompt(
-                    self.session.lock().unwrap().messages(),
-                    self.system_prompt.as_deref(),
-                );
-                let mut result = match self.llm.do_stream(&CallOptions {
-                    prompt,
-                    tools: Some(self.tools.schemas()),
-                    ..CallOptions::default()
-                }).await {
-                    Ok(r) => r,
-                    Err(e) => break Err(AgentError::Llm(e.to_string())),
-                };
-
-                // 观察:逐块收 TextDelta 转发前端,同时累积 assistant 内容
-                let mut text = String::new();
-                let mut calls: Vec<ToolCall> = Vec::new();
-                let mut failure: Option<AgentError> = None;
-                loop {
-                    let chunk = tokio::select! {
-                        _ = token.cancelled() => Chunk::Cancelled,
-                        part = result.stream.next() => match part {
-                            None => Chunk::End,
-                            Some(p) => Chunk::Part(p),
-                        },
-                    };
-                    match chunk {
-                        Chunk::Cancelled => {
-                            failure = Some(AgentError::Stopped);
-                            break;
-                        }
-                        Chunk::End => break,
-                        Chunk::Part(Ok(StreamPart::TextDelta { delta, .. })) => {
-                            text.push_str(&delta);
-                            yield TurnEvent::TextDelta(delta);
-                        }
-                        Chunk::Part(Ok(StreamPart::ToolCall {
-                            tool_call_id, tool_name, input, ..
-                        })) => {
-                            calls.push(ToolCall {
-                                tool_call_id,
-                                tool_name,
-                                input,
-                                provider_executed: None,
-                                dynamic: None,
-                                thought_signature: None,
-                            });
-                        }
-                        Chunk::Part(Ok(StreamPart::Error { error })) => {
-                            failure = Some(AgentError::Llm(error.to_string()));
-                            break;
-                        }
-                        Chunk::Part(Ok(_)) => {}
-                        Chunk::Part(Err(e)) => {
-                            failure = Some(AgentError::Llm(e.to_string()));
-                            break;
-                        }
-                    }
-                }
-                if let Some(e) = failure {
-                    break Err(e);
-                }
-
-                // assistant 回写 session(流是视图,session 是事实源)
-                self.session
-                    .lock()
-                    .unwrap()
-                    .push(assistant_message(&text, &calls));
-                self.emit_step(step, &text, calls.len());
-
-                if calls.is_empty() {
-                    break Ok(text); // 终答
-                }
-
-                // 行动 + 观察:执行工具,失败回喂,panic 任务边界
-                for call in calls {
-                    yield TurnEvent::ToolCall {
-                        name: call.tool_name.clone(),
-                        args: call.input.clone(),
-                    };
-                    let out = self.tools.execute(&call, &token).await;
-                    self.emit_tool(&call, &out);
-                    yield TurnEvent::ToolResult {
-                        name: call.tool_name.clone(),
-                        ok: out.ok,
-                        output: out.output.clone(),
-                    };
-                    self.session
-                        .lock()
-                        .unwrap()
-                        .push(tool_result_message(&call, &out));
-                }
-            };
-
+            let out = self.run_loop(&token).await;
             self.status.set(AgentStatus::Idle);
-            yield TurnEvent::Done(outcome);
+            self.emit_turn_end(self.id(), &out);
+            out
         })
     }
 }
