@@ -43,7 +43,10 @@ async fn run_turn(agent: &Arc<dyn Agent>, input: &str) {
 
 // ── 打印监听器(fn 项:省略生命周期满足 Listener 的 for<'a> blanket impl)──
 
-fn print_delta<'a>(_ctx: &'a Ctx, e: &'a AgentTextDelta) -> BoxFuture<'a, Result<Option<()>, CordisError>> {
+fn print_delta<'a>(
+    _ctx: &'a Ctx,
+    e: &'a AgentTextDelta,
+) -> BoxFuture<'a, Result<Option<()>, CordisError>> {
     let d = e.delta.clone();
     Box::pin(async move {
         use std::io::Write as _;

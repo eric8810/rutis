@@ -11,8 +11,9 @@ use aimux_core::language_model::LanguageModel;
 use aimux_core::message::Role;
 use rutis::{Ctx, FiberState, FiberView, Listener};
 use rutis_agent::{
-    agent_key, llm_key, tool_call, Agent, AgentDriverPlugin, AgentError, AgentStatus, AgentTextDelta,
-    AgentToolCall, AgentToolResult, AgentTurnEnd, LlmResponse, ScriptedLlm, ToolDef, ToolsPlugin,
+    agent_key, llm_key, tool_call, Agent, AgentDriverPlugin, AgentError, AgentStatus,
+    AgentTextDelta, AgentToolCall, AgentToolResult, AgentTurnEnd, LlmResponse, ScriptedLlm,
+    ToolDef, ToolsPlugin,
 };
 use serde_json::{json, Value};
 
@@ -223,7 +224,7 @@ async fn text_arrives_as_multiple_deltas() {
     })
     .await;
     assert_eq!(deltas.load(Ordering::SeqCst), 3); // 3 个增量
-    // 增量内容集合 = {"abcd","efgh","ij"}(派发逐事件 spawn,不保证顺序)
+                                                  // 增量内容集合 = {"abcd","efgh","ij"}(派发逐事件 spawn,不保证顺序)
     let got = text.lock().unwrap().clone();
     for chunk in ["abcd", "efgh", "ij"] {
         assert!(got.contains(chunk), "{got}");
@@ -794,7 +795,19 @@ async fn status_transitions_and_session_grows() {
             _ctx: &'a Ctx,
             _e: &'a rutis_agent::AgentPreStep,
             next: rutis::Next<'a, rutis_agent::AgentPreStep>,
-        ) -> rutis::BoxFuture<'a, Result<Result<(Vec<aimux_core::language_model_message::LanguageModelPromptMessage>, Vec<aimux_core::options::Tool>), String>, rutis::CordisError>> {
+        ) -> rutis::BoxFuture<
+            'a,
+            Result<
+                Result<
+                    (
+                        Vec<aimux_core::language_model_message::LanguageModelPromptMessage>,
+                        Vec<aimux_core::options::Tool>,
+                    ),
+                    String,
+                >,
+                rutis::CordisError,
+            >,
+        > {
             let entered = self.entered.clone();
             let gate = self.gate.lock().unwrap().take();
             Box::pin(async move {

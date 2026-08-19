@@ -165,6 +165,7 @@ impl Ctx {
 | D28 | 资源所有权:经 `Ctx` 注册的自动归 fiber;`Disposer` 仅提前释放,不放回 `Effect`;isolate 出的 `Ctx` 保留原 fiber 所有权 | resolution D28;codex 评审;TS [reflect.ts:277-304](../src/reflect.ts#L277) |
 | D29 | 事件跨 isolate 不过滤;isolate 仅隔离注册表;作用域事件用户自建子总线 | resolution D29;TS `Context.filter` 刻意不保真 |
 | D30 | panic 任务边界:spawn 必须观察 JoinHandle(JoinSet 收);listener panic 经 JoinError 路由 ErrorSink;async disposer panic 在 task 边界 catch 包 `PluginFailed` | resolution D30;codex 二轮 |
+| D31 | emit 派发序(2026-08-19 增补,修订 D4 的逐事件 spawn):fire-and-forget 不变,**同事件类型按发射序串行派发**——尾链:单次持锁内"取上一派发任务句柄 → spawn 新任务 → 存尾"(必须原子,两段锁在并发同类型 emit 下分叉链,实测 4 任务并发监听器);任务内先 await 上一任务、再按注册序逐个 await 监听器。代价:同事件多监听器由并发改串行(投递序所迫);panic 经 CatchUnwind 不断链,监听器内重入 emit 同类型排链尾不死锁;**跨事件类型不保证顺序**(已知边界,消费方需全序时按载荷自序);监听器完成顺序仍不作契约(D9) | 对齐 cordis/dsh emit 的同步顺序性(JS 单线程免费;dsh `core/agent/src/dispatch.ts` 快照 + 逐个 contained 调用);Rust 直译逐事件 spawn 丢失该保证:多线程背靠背 emit 实测错位 ~30%、位移最大 52(单线程与 ≥1ms 间隔零乱序);回归钉死于 `rutis/tests/dispatch_chain_probe.rs`(并发不分叉)与 `rutis-agent/tests/order_probe.rs`(单发射者序) |
 
 **依赖**:tokio(rt-multi-thread, sync, macros)+ tokio-util(CancellationToken)+ thiserror(普通依赖)。**不引 futures-util**(parallel 用 `tokio::task::JoinSet`)、不引 async-trait。**serde/serde_json 仅 agent 示例 crate**,不进核心。
 

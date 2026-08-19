@@ -441,7 +441,8 @@ async fn events_observed_and_listeners_unload_with_fiber() {
         assert!(matches!(&steps[0], Seen::Step(1, None, 1)));
         assert!(matches!(&steps[1], Seen::Step(2, Some(c), 0) if c == "30"));
         assert_eq!(tools.len(), 1);
-        assert!(matches!(&tools[0], Seen::Tool(name, true) if name == "get_weather"));    }
+        assert!(matches!(&tools[0], Seen::Tool(name, true) if name == "get_weather"));
+    }
     let count_after_run = events.lock().unwrap().len();
 
     // 监听器随 audit fiber 卸载:同一 driver 再跑一轮,无新事件

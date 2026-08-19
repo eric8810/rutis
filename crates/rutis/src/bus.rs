@@ -107,6 +107,9 @@ fn claim_once<C>(list: &mut Vec<Arc<Hook<C>>>) -> Vec<Arc<Hook<C>>> {
 struct BusInner {
     hooks: HashMap<TypeId, Vec<Arc<Hook<Arc<dyn ErasedCall>>>>>,
     wf_hooks: HashMap<TypeId, Vec<Arc<Hook<Arc<dyn ErasedWaterfallCall>>>>>,
+    /// 同事件类型的派发尾链(D31):每次 emit 的派发任务 await 上一个,
+    /// 保证同事件多次 emit 按发射序执行(修 spawn 调度乱序)。
+    dispatch_tail: HashMap<TypeId, tokio::task::JoinHandle<()>>,
 }
 
 /// 类型化事件总线(D3:回调注册表;D16:四分发,无同步 bail)。
@@ -242,23 +245,40 @@ impl EventBus {
             .collect()
     }
 
-    /// emit:触发即忘(D16/D30)。单层 spawn:任务持 owned `Ctx` + `Arc<E>`,
-    /// 任务内 CatchUnwind 捕获 panic、尾部自路由 Err/panic 到 ErrorSink
-    ///(简化:双层 spawn 的观察者任务取消时 into_panic 会二次 panic,评审 P2)。
+    /// emit:触发即忘(D16/D30)。**同事件类型按发射序串行派发**(D31):
+    /// 单次持锁内"取上一派发任务句柄 → spawn 新任务 → 存为尾"(原子,
+    /// 防 remove/insert 两段锁在并发同类型 emit 下分叉链);任务内先
+    /// await 上一个,再按注册序逐个 await 监听器。监听器 panic 经
+    /// CatchUnwind 捕获路由 ErrorSink,`prev.await` 正常返回,链不断;
+    /// 监听器内重入 emit 同类事件仅排到链尾,不死锁。跨事件类型不保证
+    /// 顺序(已知边界,见 D31)。spawn 在临界区内只入队不同步执行,
+    /// std Mutex 无重入,故 `take_hooks` 的锁必须已释放。
     pub fn emit<E: Event>(&self, ctx: &Ctx, e: Arc<E>) {
-        for hook in self.take_hooks::<E>(false) {
-            let ctx2 = ctx.clone();
-            let e2 = e.clone();
-            let sink = ctx.error_sink();
-            ctx.handle().spawn(async move {
-                let out = CatchUnwind::new(hook.call.call(&ctx2, &*e2 as &DynEvent)).await;
+        let hooks = self.take_hooks::<E>(false);
+        if hooks.is_empty() {
+            return; // 不进链:无监听器不产生派发任务
+        }
+        let ctx2 = ctx.clone();
+        let sink = ctx.error_sink();
+        let handle = ctx.handle().clone();
+        let mut inner = self.inner.lock().unwrap();
+        let prev = inner.dispatch_tail.remove(&TypeId::of::<E>());
+        let tail = handle.spawn(async move {
+            // 等同事件上一次派发完成(链式保序)
+            if let Some(prev) = prev {
+                let _ = prev.await;
+            }
+            // 按注册序逐个 await(不并发 spawn,否则退回乱序)
+            for hook in hooks {
+                let out = CatchUnwind::new(hook.call.call(&ctx2, &*e as &DynEvent)).await;
                 match out {
                     Ok(Ok(_)) => {}
                     Ok(Err(err)) => sink(Arc::new(err)),
                     Err(p) => sink(Arc::new(panic_error(p))),
                 }
-            });
-        }
+            }
+        });
+        inner.dispatch_tail.insert(TypeId::of::<E>(), tail);
     }
 
     /// parallel:并发全等,聚合全部错误(JoinSet,D16)。

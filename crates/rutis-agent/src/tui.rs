@@ -35,9 +35,19 @@ use crate::events::{AgentTextDelta, AgentToolCall, AgentToolResult, AgentTurnEnd
 #[derive(Debug, Clone)]
 enum UiEvent {
     TextDelta(String),
-    ToolCall { name: String, args: String },
-    ToolResult { name: String, ok: bool, output: String },
-    TurnEnd { ok: bool, error: String },
+    ToolCall {
+        name: String,
+        args: String,
+    },
+    ToolResult {
+        name: String,
+        ok: bool,
+        output: String,
+    },
+    TurnEnd {
+        ok: bool,
+        error: String,
+    },
 }
 
 /// TUI 前端插件:`injects = [agent]`,依赖 agent 服务(dual gating 之上再门控)。

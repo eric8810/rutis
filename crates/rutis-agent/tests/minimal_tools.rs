@@ -488,7 +488,9 @@ async fn minimal_turn_edits_file_and_runs_command() {
         .events()
         .on(&root, ToolResultL(results.clone()))
         .unwrap();
-    let text = soon(agent.followup("bump timeout and show the file")).await.unwrap();
+    let text = soon(agent.followup("bump timeout and show the file"))
+        .await
+        .unwrap();
 
     // 文件真被改、命令真被跑;事件派发与 followup 返回并发,轮询等齐 2 条结果
     soon(async {

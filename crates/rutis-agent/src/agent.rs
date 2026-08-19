@@ -84,8 +84,7 @@ pub trait Agent: Send + Sync + 'static {
     /// session 快照(driver 内部持锁拷贝;`messages()` 只读)。
     fn session(&self) -> SessionSnapshot;
     /// 提交一条用户消息:push 进 session,驱动一个 turn,返回终态。
-    fn followup<'a>(&'a self, input: &'a str)
-        -> BoxFuture<'a, Result<String, AgentError>>;
+    fn followup<'a>(&'a self, input: &'a str) -> BoxFuture<'a, Result<String, AgentError>>;
     /// 中断当前 turn;session(history)保留,下次 followup 继续。
     fn cancel(&self);
 }
