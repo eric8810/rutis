@@ -1,5 +1,7 @@
 # Binary release:tag v* 触发 → 4 targets 构建 → tar.gz + sha256 → GitHub Release。
 # 产物名:rutis-cli-<version>-<target>.tar.gz(含二进制 + README + LICENSE)。
+# musl 目标在 rust-musl-cross 容器内构建,自带工具链,不依赖 runner 的 apt
+#(ubuntu-24.04 runner 的 apt-get 已连续挂死两次,不再赌它)。
 
 name: release
 
@@ -19,12 +21,15 @@ jobs:
           - { os: macos-14, target: aarch64-apple-darwin }
           - { os: macos-14, target: x86_64-apple-darwin }
           - { os: ubuntu-24.04, target: x86_64-unknown-linux-gnu }
-          - { os: ubuntu-24.04, target: x86_64-unknown-linux-musl }
+          - { os: ubuntu-24.04, target: x86_64-unknown-linux-musl, container: messense/rust-musl-cross:x86_64-musl }
     runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: install rust toolchain
+        if: matrix.container == ''
+        uses: dtolnay/rust-toolchain@stable
         with:
           target: ${{ matrix.target }}
 
@@ -32,12 +37,9 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
-      - name: install musl-tools
-        if: matrix.target == 'x86_64-unknown-linux-musl'
-        # 重试 + 硬超时:runner 的 apt 偶发挂死(曾 20 分钟无输出)
-        run: |
-          timeout 300 sudo apt-get update -o Acquire::Retries=3 -o Acquire::http.Timeout=15
-          timeout 180 sudo apt-get install -y musl-tools
+      - name: add musl target (container)
+        if: matrix.container != ''
+        run: rustup target add ${{ matrix.target }}
 
       - name: build
         run: cargo build --release -p rutis-cli --target ${{ matrix.target }}
