@@ -34,7 +34,10 @@ jobs:
 
       - name: install musl-tools
         if: matrix.target == 'x86_64-unknown-linux-musl'
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
+        # 重试 + 硬超时:runner 的 apt 偶发挂死(曾 20 分钟无输出)
+        run: |
+          timeout 300 sudo apt-get update -o Acquire::Retries=3 -o Acquire::http.Timeout=15
+          timeout 180 sudo apt-get install -y musl-tools
 
       - name: build
         run: cargo build --release -p rutis-cli --target ${{ matrix.target }}
