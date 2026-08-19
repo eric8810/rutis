@@ -1,0 +1,84 @@
+# Binary release:tag v* 触发 → 4 targets 构建 → tar.gz + sha256 → GitHub Release。
+# 产物名:rutis-cli-<version>-<target>.tar.gz(含二进制 + README + LICENSE)。
+
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-14, target: aarch64-apple-darwin }
+          - { os: macos-14, target: x86_64-apple-darwin }
+          - { os: ubuntu-24.04, target: x86_64-unknown-linux-gnu }
+          - { os: ubuntu-24.04, target: x86_64-unknown-linux-musl }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          target: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: install musl-tools
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: build
+        run: cargo build --release -p rutis-cli --target ${{ matrix.target }}
+
+      - name: package
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          NAME="rutis-cli-${VERSION}-${{ matrix.target }}"
+          mkdir -p "dist/${NAME}"
+          cp "target/${{ matrix.target }}/release/rutis-cli" "dist/${NAME}/"
+          cp crates/rutis-cli/README.md LICENSE "dist/${NAME}/"
+          tar -czf "dist/${NAME}.tar.gz" -C dist "${NAME}"
+          if command -v sha256sum >/dev/null; then
+            (cd dist && sha256sum "${NAME}.tar.gz" > "${NAME}.tar.gz.sha256")
+          else
+            (cd dist && shasum -a 256 "${NAME}.tar.gz" > "${NAME}.tar.gz.sha256")
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: dist/*
+
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          gh release create "$GITHUB_REF_NAME" dist/rutis-cli-* \
+            --title "rutis-cli ${VERSION}" \
+            --notes "Binary release of rutis-cli (minimal coding agent: bash + replace_text).
+
+          Install: download the tar.gz for your platform, verify the .sha256, extract, and put \`rutis-cli\` on your PATH. Or \`cargo install rutis-cli\`.
+
+          Requires an aimux provider key at runtime (e.g. \`DEEPSEEK_API_KEY\`); try \`rutis-cli --scripted\` for an offline demo."

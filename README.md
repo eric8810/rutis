@@ -15,24 +15,21 @@ Cordis 核心范式的 Rust 惯用实现(自 [min-cordis](https://github.com/eri
 | crate | 内容 |
 |---|---|
 | [`rutis`](crates/rutis) | 内核:Ctx / fiber / registry / event bus / effect(115 项契约与对拍测试) |
-| [`rutis-agent`](crates/rutis-agent) | 最小 agent 框架:aimux `LanguageModel` 服务 + `ToolsPlugin` + `AgentDriverPlugin`(流式 `followup`)+ 内存 session + ratatui TUI;minimal mode 内置 `bash` + `replace_text` 工具(能改文件、能跑命令的 coding agent,设计见 [docs/design-minimal-mode-2026-08-18.md](docs/design-minimal-mode-2026-08-18.md)) |
+| [`rutis-agent`](crates/rutis-agent) | 最小 agent 框架:aimux `LanguageModel` 服务 + `ToolsPlugin` + `AgentDriverPlugin`(流式 `followup` + waterfall 中间件 + `agent/*` 事件广播)+ 内存 session + ratatui TUI;minimal mode 内置 `bash` + `replace_text` 工具(设计见 [docs/design-minimal-mode-2026-08-18.md](docs/design-minimal-mode-2026-08-18.md)) |
+| [`rutis-cli`](crates/rutis-cli) | 命令行形态:最小 coding agent TUI(`cargo install rutis-cli` 或 [GitHub Releases](https://github.com/eric8810/rutis/releases) 下载) |
 
 agent crate 一句话:**一个 aimux [`LanguageModel`](../aimux) 服务 + 一个 `ToolRegistry` 插件 + 一个实现 `Agent` 接口的 driver 插件 + 一个内存 session(连续 loop 的事实源)**。设计见 [docs/design-min-agent-2026-08-18.md](docs/design-min-agent-2026-08-18.md) 与 [docs/design-agent-verification-tui-2026-08-18.md](docs/design-agent-verification-tui-2026-08-18.md)。
 
 ## 依赖布局
 
-agent crate 经 path 依赖消费 [aimux](https://github.com/eric8810/aimux)(LLM 统一访问层,`LanguageModel` / `CallOptions` / 329 provider)。请与本项目并列检出:
-
-```
-Code/
-├── rutis/
-└── aimux/
-```
+agent / cli crate 经 crates.io 版本消费 [aimux](https://crates.io/crates/aimux-core)(LLM 统一访问层,`LanguageModel` / `CallOptions`,329 provider),**无需并列检出**。要 hack 本地 aimux,在工作区根加未提交的 `[patch]` 指向本地路径即可。
 
 ## 快速开始
 
 ```bash
 cargo test                                    # 全量:内核对拍 + agent 三层中的前两层
+cargo install -p rutis-cli --path crates/rutis-cli   # 装 CLI(或 cargo install rutis-cli)
+rutis-cli --scripted                          # 无 key 离线演示
 cargo run -p rutis-agent --example demo       # 真实后端两轮对话 + 依赖驱动驱逐(需 DEEPSEEK_API_KEY)
 cargo run -p rutis-agent --example tui        # 交互式 TUI,流式逐字 / 工具可见 / Esc 取消
 cargo run -p rutis-agent --example tui_scripted   # 离线脚本后端,无需 key

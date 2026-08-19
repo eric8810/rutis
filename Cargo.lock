@@ -14,6 +14,8 @@ dependencies = [
 [[package]]
 name = "aimux-core"
 version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bcd32368dbdbf61f7a5b485fd5dc1a491d3c0d68bf530542c57cbce30aab3bfd"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -30,6 +32,8 @@ dependencies = [
 [[package]]
 name = "aimux-provider-utils"
 version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5b32137d2644c7beb52d12fe92a38123f2e871a50b3d980462f0e979cc4c74f0"
 dependencies = [
  "aimux-core",
  "aimux-stream",
@@ -52,6 +56,8 @@ dependencies = [
 [[package]]
 name = "aimux-providers"
 version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3963fcede266a8bf4061bea858b469ce8e6f92339d355ebd992177f43b056b7b"
 dependencies = [
  "aimux-core",
  "aimux-provider-utils",
@@ -76,6 +82,8 @@ dependencies = [
 [[package]]
 name = "aimux-stream"
 version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c539eaccf41d417f55975d172e4e8b49cdb2916744182fc28e4a0f5b729165d9"
 dependencies = [
  "bytes",
  "futures",
@@ -1931,6 +1939,18 @@ dependencies = [
  "tokio",
  "tokio-util",
  "unicode-width",
+]
+
+[[package]]
+name = "rutis-cli"
+version = "0.1.0"
+dependencies = [
+ "aimux-core",
+ "aimux-providers",
+ "rutis",
+ "rutis-agent",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

@@ -1,0 +1,23 @@
+[package]
+name = "rutis-cli"
+description = "Minimal coding agent CLI on rutis: bash + replace_text tools, streaming TUI, any aimux provider"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+readme = "README.md"
+keywords = ["llm", "agent", "coding", "cli", "tui"]
+categories = ["command-line-utilities"]
+
+[[bin]]
+name = "rutis-cli"
+path = "src/main.rs"
+
+[dependencies]
+rutis = { path = "../rutis", version = "0.1.0" }
+rutis-agent = { path = "../rutis-agent", version = "0.1.0" }
+aimux-core = "0.3.0"
+aimux-providers = "0.3.0"
+serde_json = "1"
+tokio = { workspace = true }

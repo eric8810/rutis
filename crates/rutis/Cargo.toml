@@ -4,6 +4,11 @@ description = "Cordis core paradigms in idiomatic Rust: plugin assembly, fiber l
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+readme = "README.md"
+keywords = ["cordis", "plugin", "fiber", "event-bus", "async"]
+categories = ["asynchronous", "concurrency"]
 
 [dependencies]
 tokio = { workspace = true }

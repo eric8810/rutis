@@ -1,11 +1,13 @@
 [workspace]
 resolver = "2"
-members = ["crates/rutis", "crates/rutis-agent"]
+members = ["crates/rutis", "crates/rutis-agent", "crates/rutis-cli"]
 
 [workspace.package]
 edition = "2021"
 version = "0.1.0"
 license = "MIT"
+repository = "https://github.com/eric8810/rutis"
+rust-version = "1.85"
 
 [workspace.dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "time"] }
