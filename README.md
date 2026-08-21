@@ -47,6 +47,8 @@ provider / model 可用 `AIMUX_PROVIDER` / `AIMUX_MODEL` 覆盖(如本地 `AIMUX
 ## 文档
 
 - [design-rust-port.md](docs/design-rust-port.md) — 内核设计
+- [design-dual-core-2026-08-20.md](docs/design-dual-core-2026-08-20.md) — 双核架构与经验锈化路线(rutis Rust 脊柱 × dsh TS 功能面)
+- [design-dsh-bridge-2026-08-21.md](docs/design-dsh-bridge-2026-08-21.md) — dsh 桥 v1 设计(TS 插件接入 + 编排 API)
 - [cordis-spec-parity-2026-08-18.md](docs/cordis-spec-parity-2026-08-18.md) — 与 cordis 原版 spec 对拍
 - [design-min-agent-2026-08-18.md](docs/design-min-agent-2026-08-18.md) / [design-agent-verification-tui-2026-08-18.md](docs/design-agent-verification-tui-2026-08-18.md) — agent 框架与 TUI 设计
 - [design-minimal-mode-2026-08-18.md](docs/design-minimal-mode-2026-08-18.md) — minimal mode(bash + replace_text)
