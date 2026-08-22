@@ -21,6 +21,12 @@
 > 矩阵已执行:L0 = 4/10,官方闭包 236 包零缺口(证实 §十.11),缺口全在
 > 社区 workspace 内部包与第三方;语料需 shape 过滤(fork/VSCode 形态)。
 > 实验记录:[experiment-m1p5-corpus-2026-08-22.md](experiment-m1p5-corpus-2026-08-22.md)。**
+> **2026-08-22 M2 已完成签字(6 commits 至 82736d1):TcpWire 真传输 + 事件缝
+> + llm 缝端到端 + 完整 turn(两轮:tool-call 过线→宿主执行→回喂→终轮
+> 文本)+ L3 映射(system/messages/tools/finish/usage 逐字段)+ console.log
+> 注入验收(300 行 stdout 噪声下帧流不损坏)。口径记录:传输为 loopback
+> TCP(专用通道裁决的行为面),fd3/unix-socket 原生实现留 Linux lane;
+> turn 语义经验证,真 dsh agent-loop 的全栈组装属下一阶段(第二层)。**
 
 ## 一、目标、层次纪律与口径
 
