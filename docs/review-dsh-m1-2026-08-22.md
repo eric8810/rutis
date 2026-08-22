@@ -102,9 +102,39 @@ aimux,层次纪律(§一/§八)成立;rutis 实际用量为 `BoxFuture` 别名�
 | S2 空 result | ✅ 已修:`ok:true` 缺 result 宽容为 `Null` | `Frame::outcome` |
 | S3 双实现 | ✅ 已修:泵复用 `Frame::outcome()` | pump Res 臂 |
 | D2 protocol 回显 | ✅ 已修:hello 回包回显 `protocol` | `handshake_replies_symmetric_capability_set` |
-| F6 §十.2 复核 | ⏸ 挂起:复核依赖的 `plugin-reference/raw` 语料数据本机 dsh 仓缺失(M0 时已发现);**M1.5 前必须找回或重扫语料并落一行结论** | — |
+| F6 §十.2 复核 | ✅ 已完成(见下节"§十.2 同步 API 复核"):正确口径(过桥面 = `LlmAdapter`)下同步成员调用方交集为空;语料数据位置与明细缺失情况一并落账 | 本文档下节 |
 
 **M1 在两级桥结构下签字**(2026-08-22):验收行全部由 rutis-cordis 的
 17 项机制测试覆盖,dsh 节两级握手由 rutis-dsh 的 4 项测试覆盖;Z1/F1
-放行条件与 F2/F4/F5/S2/S3/D2 修补全部落位,F6 作为 M1.5 的硬前置挂起
-记录在案。
+放行条件与 F2/F4/F5/S2/S3/D2 修补全部落位,F6 复核亦已完成后签字。
+
+## §十.2 同步 API 复核(2026-08-22,F6)
+
+**数据源**:语料库实际位于 SSH 服务器 `eric8810@100.121.215.57:
+/media/eric8810/fast-deliver/code/dsh-ecosystem/`(research/ 10 份 md +
+raw/ 机读 TSV;repos/ 9398 浅克隆仓 70G;scripts/ 分析脚本)。评审原文
+引用的 `ctx-repo-operations.tsv`(repo 级明细)已缺失,但
+`research/ctx-operations.md` 的**成员级聚合**(repo × service × member
+的计数汇总)足以支撑本次复核;repo 级明细需要时用
+`scripts/ctx-repo-detail.py` 重跑。
+
+**口径修正**:v1 过桥的不是整个 `ctx.llm` 服务,而是 **`LlmAdapter` 面**
+(llm 缝:TS 的 LlmRuntime 留驻本地,Rust 侧 aimux 实现被注册为一个
+adapter)。`LlmRuntime` 自身的同步注册表成员不在过桥面内。
+
+**结论:交集为空,复核通过。** 逐成员判定(dsh `packages/llm/llm`
+源码 + 社区 897 仓 / 19477 次 llm 调用):
+
+| 成员(社区次数) | 面 | 同步性 | 过线 |
+|---|---|---|---|
+| `registerAdapter`×5421 / `listProviders`×2921 / `listConfigurableProviders`×1350 / `registerConfigurableProviders`×628 / `registerModelDiscovery`×585 / `providerRetryPolicy`×405 | LlmRuntime(TS 留驻) | 同步 | 否——注册表本地操作,零桥影响 |
+| `stream`×1830 / `prepareCall`×52 / `resolveModelInfo`×2302 / `discoverModels`×2273 / `listModels`×1458 / `resolveCallConfig`×156 | LlmRuntime → adapter 委托 | **async** | **是(llm 缝)** |
+| `providerInfo` / `providerRetryPolicy`(adapter 声明) | LlmAdapter | **同步** | **注册期快照,不跨线**:`prepareRoutes` 在注册时同步调一次,结果(`{id,name}` + retryPolicy)快照进注册表;运行期 `LlmRuntime.providerRetryPolicy` 只读快照。桥 adapter 以 TS 侧常驻的静态元数据满足这两个同步成员 |
+| `llm/stream`×462 / `llm/adapters-updated`×270 | 事件订阅 | — | 事件缝(emit ntf),与同步性无关 |
+
+**顺带发现(记录在案,不阻塞)**:社区直接摸 `LlmRuntime` 的 private 成员
+(`registration`×22、`adapters`×13、`streamWithRegistration`×9)与自挂
+非官方面(`addProvider`×27、`complete`×4、`registerProviderAuth`×3、
+`isPiEngineEnabled`×2、`__dshVisionResolveWrapped`×3),合计 ~83 次。
+LlmRuntime 留驻 TS 则无害;**锈化 LlmRuntime 本身时这是已知破口清单**,
+也是 M1.5 语料样本挑选的参考维度。
