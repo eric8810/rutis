@@ -10,11 +10,83 @@
 
 use std::sync::{Arc, OnceLock};
 
+use aimux_core::content::ContentPart;
 use aimux_core::language_model::LanguageModel;
-use aimux_core::options::CallOptions;
+use aimux_core::language_model_message::LanguageModelPromptMessage;
+use aimux_core::message::Role;
+use aimux_core::options::{CallOptions, FunctionTool};
 use futures::StreamExt;
 use rutis_cordis::{Bridge, InboundHooks, RemoteError};
 use serde_json::{json, Value};
+
+/// dsh `GenerateOptions`(TS JSON)→ aimux `CallOptions` 的 L3 映射面:
+/// `system` → System 消息;`messages` 的 text 块按角色映射(非文本块
+/// 图片/文件是长尾清单项);`tools` 的 `{name,description,parameters}` →
+/// `FunctionTool`。工具结果消息以 user 文本回喂(宿主侧组装)。
+pub fn map_generate_options(generate: &Value) -> Result<CallOptions, RemoteError> {
+    let mut prompt: Vec<LanguageModelPromptMessage> = Vec::new();
+    if let Some(system) = generate.get("system").and_then(Value::as_str) {
+        prompt.push(text_message(Role::System, system));
+    }
+    if let Some(messages) = generate.get("messages").and_then(Value::as_array) {
+        for message in messages {
+            let role = match message.get("role").and_then(Value::as_str) {
+                Some("assistant") => Role::Assistant,
+                Some("system") => Role::System,
+                _ => Role::User,
+            };
+            let text = message
+                .get("content")
+                .and_then(Value::as_array)
+                .map(|blocks| {
+                    blocks
+                        .iter()
+                        .filter_map(|b| b.get("text").and_then(Value::as_str))
+                        .collect::<Vec<_>>()
+                        .join("")
+                })
+                .unwrap_or_default();
+            prompt.push(text_message(role, &text));
+        }
+    }
+    let tools = generate
+        .get("tools")
+        .and_then(Value::as_array)
+        .map(|schemas| {
+            schemas
+                .iter()
+                .filter_map(|schema| {
+                    let name = schema.get("name")?.as_str()?.to_owned();
+                    Some(
+                        FunctionTool {
+                            name,
+                            description: schema
+                                .get("description")
+                                .and_then(Value::as_str)
+                                .map(str::to_owned),
+                            input_schema: schema
+                                .get("parameters")
+                                .cloned()
+                                .unwrap_or_else(|| json!({})),
+                            strict: None,
+                            provider_options: None,
+                            input_examples: None,
+                        }
+                        .into(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        });
+    Ok(CallOptions { prompt, tools, ..CallOptions::default() })
+}
+
+fn text_message(role: Role, text: &str) -> LanguageModelPromptMessage {
+    LanguageModelPromptMessage {
+        role,
+        content: vec![ContentPart::Text { text: text.to_owned(), provider_options: None }],
+        provider_options: None,
+    }
+}
 
 /// llm 缝本体:挂进桥的入站钩子,服务 `svc/call {service:"llm",
 /// method:"stream"}`。
@@ -62,8 +134,11 @@ impl LlmSeam {
             code: "notAttached".into(),
             message: "LlmSeam::attach was not called after Bridge::start".into(),
         })?;
-        // M2-3:scripted 模型不读 prompt;完整映射在 M2-4(L3)。
-        let options = CallOptions::default();
+        let generate = params
+            .pointer("/params/options")
+            .cloned()
+            .unwrap_or_else(|| json!({}));
+        let options = map_generate_options(&generate)?;
         let result = self
             .model
             .do_stream(&options)
