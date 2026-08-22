@@ -96,8 +96,23 @@ impl TcpInner {
             match newline_at {
                 Some(end) => {
                     read.consume(end);
-                    let text = String::from_utf8(line).ok()?;
-                    return serde_json::from_str(&text).ok()
+                    let bytes = std::mem::take(&mut line);
+                    let text = match String::from_utf8(bytes) {
+                        Ok(text) => text,
+                        Err(e) => {
+                            eprintln!("[tcp] non-utf8 frame dropped: {e}");
+                            continue
+                        }
+                    };
+                    return match serde_json::from_str(&text) {
+                        Ok(frame) => Some(frame),
+                        Err(e) => {
+                            eprintln!("[tcp] bad json frame dropped: {e}; line[0..120]={}", &text[..text.len().min(120)]);
+                            // 坏帧不是宿主死亡:丢弃并继续泵(诊断期行为,
+                            // 定稿后改为计数 + 断连策略)。
+                            continue
+                        }
+                    }
                 }
                 None => {
                     read.consume(filled);

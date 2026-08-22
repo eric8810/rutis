@@ -35,17 +35,20 @@ fn node_binary() -> Option<String> {
 
 #[tokio::test]
 async fn event_seam_end_to_end_with_min_cordis_host() {
-    let Some(dsh_root) = env_or_skip("DSH_ROOT") else {
-        eprintln!("DSH_ROOT not set — skipping min-cordis host e2e");
+    // 环境缺失 = 显式失败而非静默通过(M2-1 的教训)。RUTIS_SKIP_NODE_E2E=1
+    // 提供显式逃生门。
+    if std::env::var("RUTIS_SKIP_NODE_E2E").as_deref() == Ok("1") {
+        eprintln!("RUTIS_SKIP_NODE_E2E=1 — skipping min-cordis host e2e");
         return
+    }
+    let Some(dsh_root) = env_or_skip("DSH_ROOT") else {
+        panic!("DSH_ROOT not set (deepseek-harness checkout) — required for min-cordis host e2e")
     };
     let Some(min_cordis_root) = env_or_skip("MIN_CORDIS_ROOT") else {
-        eprintln!("MIN_CORDIS_ROOT not set — skipping min-cordis host e2e");
-        return
+        panic!("MIN_CORDIS_ROOT not set (min-cordis checkout) — required for min-cordis host e2e")
     };
     let Some(node) = node_binary() else {
-        eprintln!("node not found — skipping min-cordis host e2e");
-        return
+        panic!("node not found on PATH (set NODE to override)")
     };
 
     // 事件回流面:notify 钩子收 evt/emit;evt/on 申报由 request 钩子确认。

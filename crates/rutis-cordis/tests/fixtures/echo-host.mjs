@@ -6,6 +6,17 @@ import net from 'node:net'
 
 const port = Number(process.env.BRIDGE_PORT)
 const sock = net.connect(port, '127.0.0.1')
+// hello 必须在 net.connect 之后同步注册:回环连接完成极快,connect 事件
+// 若在监听注册前触发就永久丢失(§三 规则 1:宿主首发)。
+sock.on('connect', () => {
+  send({
+    type: 'req', id: 1, method: 'hello',
+    params: {
+      protocol: 1, base: 'min-cordis', baseSemver: '0.1.0', dshSemver: '0.1.1-rc.2',
+      stack: ['node'], caps: { services: ['echo'], wfKinds: [], scopes: [] },
+    },
+  })
+})
 
 let buf = ''
 sock.setEncoding('utf8')
@@ -37,7 +48,12 @@ function handle(frame) {
     // Deliberate console.log on the request path: stdout is for logs, the
     // frame channel is dedicated — this must not corrupt anything.
     console.log('[echo-host] svc/call', JSON.stringify(frame.params))
-    send({ type: 'res', id: frame.id, ok: true, result: { echoed: frame.params } })
+    if (frame.params?.slow === true) {
+      // Slow path for kill-mid-call coverage: answer after 5s.
+      setTimeout(() => send({ type: 'res', id: frame.id, ok: true, result: { echoed: frame.params } }), 5000)
+    } else {
+      send({ type: 'res', id: frame.id, ok: true, result: { echoed: frame.params } })
+    }
   } else if (frame.type === 'req') {
     send({ type: 'res', id: frame.id, ok: false, error: { code: 'unhandled', message: `no ${frame.method}` } })
   } else if (frame.type === 'ntf') {

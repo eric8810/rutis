@@ -35,11 +35,11 @@ async fn setup() -> Option<(tokio::process::Child, Bridge)> {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let port = listener.local_addr().expect("addr").port();
     let script = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/echo-host.mjs");
-    let child = tokio::process::Command::new(node)
+    let child = tokio::process::Command::new(&node)
         .arg(script)
         .env("BRIDGE_PORT", port.to_string())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
         .spawn()
         .expect("spawn node");
     let (stream, _) = tokio::time::timeout(Duration::from_secs(10), listener.accept())
@@ -60,9 +60,14 @@ async fn setup() -> Option<(tokio::process::Child, Bridge)> {
 
 #[tokio::test]
 async fn tcp_end_to_end_with_real_node_process() {
-    let Some((mut child, mut bridge)) = setup().await else {
-        eprintln!("node not found — skipping tcp e2e");
+    // 环境缺失 = 显式失败而非静默通过(M2-1 的教训:skip 被算成 pass 制造
+    // 了假绿)。设置 RUTIS_SKIP_NODE_E2E=1 才跳过。
+    if std::env::var("RUTIS_SKIP_NODE_E2E").as_deref() == Ok("1") {
+        eprintln!("RUTIS_SKIP_NODE_E2E=1 — skipping tcp e2e");
         return
+    }
+    let Some((mut child, mut bridge)) = setup().await else {
+        panic!("node not found on PATH (set NODE to override, or RUTIS_SKIP_NODE_E2E=1 to skip)")
     };
 
     // 请求往返:宿主在请求路径上 console.log(stdout 留给日志,专用通道
