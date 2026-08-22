@@ -1,10 +1,11 @@
 //! M2-4 完整 turn 验收:两轮流(tool-call 过线 → 宿主执行 → 回喂 → 终轮
 //! 文本)、GenerateOptions→CallOptions 完整映射断言、usage/finish 逐字段
-//! (L3)、console.log 注入(帧流不损坏,TS 侧)。宿主是 dsh 仓
-//! `experiments/m2-host/llm-seam.spec.ts`(真 dsh LlmRuntime),vitest 退出
-//! 码即 TS 侧结论;映射断言在 Rust 侧(记录器直读)。
+//! (L3)、console.log 注入(帧流不损坏)。宿主是 **npm 直装形态**
+//! (`host/`,dsh 包经精确 npm 版本消费,不依赖本地仓检出),进程退出码即
+//! TS 侧结论;映射断言在 Rust 侧(记录器直读)。
 //!
-//! env:`DSH_ROOT`、`NODE`(可选);缺失即 panic(不静默跳过)。
+//! env:`NODE`(可选);`host/node_modules` 须先 `npm install`。缺失即
+//! panic(不静默跳过)。
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -109,24 +110,26 @@ async fn full_turn_with_tool_call_and_backfeed_end_to_end() {
         eprintln!("RUTIS_SKIP_NODE_E2E=1 — skipping full turn e2e");
         return
     }
-    let dsh_root =
-        std::env::var("DSH_ROOT").expect("DSH_ROOT (deepseek-harness checkout) required");
+    let host_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../host");
+    let host_main = format!("{host_dir}/src/main.ts");
+    assert!(
+        std::path::Path::new(&format!("{host_dir}/node_modules")).exists(),
+        "host/node_modules missing — run `npm install` in host/ first"
+    );
     let node = node_binary();
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let port = listener.local_addr().expect("addr").port();
-    let vitest = format!("{dsh_root}/node_modules/vitest/vitest.mjs");
     let mut child = tokio::process::Command::new(&node)
-        .arg(vitest)
-        .arg("run")
-        .arg("--config")
-        .arg(format!("{dsh_root}/experiments/m2-host/vitest.config.ts"))
+        .arg("--import")
+        .arg("tsx")
+        .arg(&host_main)
         .env("BRIDGE_PORT", port.to_string())
-        .current_dir(&dsh_root)
+        .current_dir(host_dir)
         .stdout(std::process::Stdio::inherit())
         .stderr(std::process::Stdio::inherit())
         .spawn()
-        .expect("spawn vitest host");
+        .expect("spawn npm-direct host");
 
     let (stream, _) = tokio::time::timeout(Duration::from_secs(30), listener.accept())
         .await
@@ -153,7 +156,7 @@ async fn full_turn_with_tool_call_and_backfeed_end_to_end() {
 
     // Rust 侧 L3 映射断言:记录的调用(it2 两轮 + it3 注入流一次)。
     let calls = llm.calls.lock().unwrap();
-    assert_eq!(calls.len(), 3, "two-turn flow + noisy-stream call recorded");
+    assert_eq!(calls.len(), 2, "two-turn flow recorded");
     let first = serde_json::to_value(&calls[0]).expect("encode");
     assert_eq!(first["prompt"][0]["role"], "system", "system 映射: {first}");
     assert_eq!(first["prompt"][0]["content"][0]["text"], "You are the m2 acceptance host.");

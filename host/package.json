@@ -1,0 +1,16 @@
+{
+  "name": "rutis-dsh-host",
+  "description": "TS-side bridge host for the rutis dsh bridge: dsh packages via exact npm versions (no local checkout)",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node --import tsx src/main.ts"
+  },
+  "dependencies": {
+    "@deepseek-ai/cordis": "4.0.1",
+    "@deepseek-ai/dsh-llm": "0.1.1-rc.2"
+  },
+  "devDependencies": {
+    "tsx": "^4.20.0"
+  }
+}
