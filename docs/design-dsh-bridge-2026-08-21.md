@@ -1,4 +1,4 @@
-# dsh 桥设计(v3.1)——两缝底座桥
+# dsh 桥设计(v3.2)——两缝底座桥(两级:基座桥 × dsh 面)
 
 > 2026-08-21 v1(agent 层)→ v2(内核层,min-cordis 基座)→ v3(方向修订:TS 跑
 > 完整 dsh 栈,Rust 只做底座;rutis-agent 独立基线)→ **v3.1:吸收独立评审
@@ -10,6 +10,13 @@
 > **2026-08-22 M0 已执行:两问全通(含官方 pwsh loader-composition spec 原样
 > 真进程复验),基座裁决 = min-cordis;评审 §B 的"loader 分叉点"担忧不成立。
 > 实验记录:[experiment-m0-min-cordis-2026-08-22.md](experiment-m0-min-cordis-2026-08-22.md)。**
+> **2026-08-22 v3.2:桥分两级——`rutis-cordis`(基座桥,通用 cordis 面:装载
+> 仲裁/服务注册/事件总线四分发/isolate 作用域)与 `rutis-dsh`(dsh 面:llm
+> 缝/事件类型映射/替身表/dshSemver/会话字段语义)。裁决依据:M1.5/M7 语料
+> 本就是 cordis 插件生态(8889 候选仓、423 仓用 `ctx.loader`),桥必须能装载
+> 任意 cordis 插件,而非只讲 dsh 的话;词汇归属见 §三之二。M1 独立评审
+> ([review-dsh-m1-2026-08-22.md](review-dsh-m1-2026-08-22.md))的 Z1/F1/F2/F5
+> 在两级结构中按层归位。**
 
 ## 一、目标、层次纪律与口径
 
@@ -24,16 +31,22 @@
    本设计的保守推迟是方向讨论的裁决,不是否定评审论据;再评估触发条件 =
    底座方向 M2 通过后第一次路线评审。
 
-**层次纪律(写死)**:
+**层次纪律(写死;v3.2 起三条腿)**:
 
 ```
-rutis-agent ──→ rutis           独立基线,零 dsh 知识,独立测试发布
-rutis-dsh   ──→ rutis + aimux   dsh 关系的唯一所在
-两者互不依赖,是内核上的兄弟。
+rutis-agent  ──→ rutis                    独立基线,零 dsh 知识,独立测试发布
+rutis-cordis ──→ rutis                    基座桥:cordis 词汇(装载仲裁/服务/
+                                          事件总线四分发/scopeId),零 dsh 知识
+rutis-dsh    ──→ rutis-cordis + aimux     dsh 关系的唯一所在(llm 缝/事件映射/
+                                          替身表/dshSemver/sessionId/turnId 语义)
+rutis-agent 与 rutis-cordis 互不依赖,是内核上的兄弟;rutis-dsh 骑在基座桥上。
 ```
 
-dsh 的一切(协议、事件名、装载、版本)封在 `rutis-dsh`;基线的 169 个测试
-就是它自洽的证明——桥重构、桥出 bug、方向推翻,基线不动。
+dsh 的一切(dsh 协议事件名、dshSemver、会话字段语义)封在 `rutis-dsh`;
+cordis 的一切(装载、服务名、事件分发语义、isolate)封在 `rutis-cordis`——
+任意 cordis TS 插件(语料库、社区插件)只经基座桥即可装载观察,不要求是 dsh
+部署。基线的 169 个测试就是它自洽的证明——桥重构、桥出 bug、方向推翻,
+基线不动。
 
 **覆盖口径:保真分级(v3.1 替换二元口径)**:
 
@@ -60,9 +73,10 @@ v2 的"94% 可装载"**作废**——评审复算证实该数字不可复现(同
 ┌─ rutis 进程 ──────────────┐        ┌─ Node 宿主进程(完整 dsh 部署)────────┐
 │ rutis 内核                 │        │ min-cordis 基座(首选)↳ 回退 vendor/cordis│
 │ aimux(模型接入)           │◄─ fd3 ─►│ dsh agent-loop + 服务包 + TS 插件      │
-│ rutis-dsh(桥,两缝)       │ 或sock  │ 桥端:llm adapter 形态 + evt 转发      │
+│ rutis-cordis(基座桥)      │ 或sock  │ 桥端 TS 侧同样两级:基座桥端(装载/    │
+│ rutis-dsh(dsh 面)         │        │ evt 通用转发)+ dsh 桥端(llm adapter) │
 │ (观察者:前端/遥测/语料库)  │        └───────────────────────────────────────┘
-└───────────────────────────┘
+└───────────────────────────┘       纯 cordis 插件(M1.5/M7 语料)只接基座桥
    rutis-agent(独立基线,不连桥,不在本图数据流中)
 ```
 
@@ -98,12 +112,15 @@ v2 的"94% 可装载"**作废**——评审复算证实该数字不可复现(同
 
 **连接规则(六条,写死)**:
 
-1. **`hello` 握手 + 能力集协商**:宿主首发 `{protocol: 1, base, baseSemver,
-   dshSemver, stack, caps: {services, wfKinds, scopes}}`,Rust 回对称的能力
-   集。**版本事实(评审 §四.6 修正)**:dsh 实测 tag `dsh-v0.1.0-rc.7`,219
-   包全线同版;`dshSemver` 声明即对齐它。能力集求差在**装载期**生效:`plugin/load`
-   返回 `injects` 与宿主能力集求差,差集非空即显式拒绝或降级提示(§十.8 的
-   载体)。版本错配在握手期报错。
+1. **`hello` 握手 + 能力集协商(两级,v3.2)**:宿主首发 `{protocol: 1, base,
+   baseSemver, stack, caps: {services, wfKinds, scopes}}`——**基座级**,由
+   `rutis-cordis` 校验(`base` ∈ min-cordis|cordis,装载/事件能力);dsh 部署
+   **附加 `dsh: {dshSemver, services}` 节**——由 `rutis-dsh` 校验,纯 cordis
+   宿主不带此节。Rust 逐级回对称的能力集。**版本事实(评审 §四.6 修正)**:
+   dsh 实测 tag `dsh-v0.1.0-rc.7`,219 包全线同版;`dshSemver` 声明即对齐它。
+   能力集求差在**装载期**生效:`plugin/load` 返回 `injects` 与宿主能力集求差,
+   差集非空即显式拒绝或降级提示(§十.8 的载体)。版本错配在握手期报错
+   (两级任一失败都算握手失败)。
 2. **宿主级控制 `host/restart`**:杀进程 + 重拉,覆盖 cancel 到不了的场景。
 3. **申报与同名仲裁**:按插件整体覆盖(幂等重载);同名冲突拒绝后者、指名
    已有者。
@@ -116,8 +133,27 @@ v2 的"94% 可装载"**作废**——评审复算证实该数字不可复现(同
    带超时,超时按失败计数不等待。v1 底座方向只消费 emit;parallel/serial 为
    锈化波(storage 的 flush 类语义)预留——`session/flush`(parallel,语料
    1190 引用)与 `agent/turn-stopping`(serial,273)**不得静默降级为 ntf**。
-6. **会话归属**:`sessionId` / `turnId` / `scopeId` 字段 v1 全部预留、全局
-   广播不过滤,v2 启用——显式声明。
+6. **会话归属(v3.2 归属拆层)**:`sessionId` / `turnId` / `scopeId` 字段 v1
+   全部预留、全局广播不过滤,v2 启用——显式声明。线格式三字段集中定义在
+   `rutis-cordis` 的帧信封(一处定义,两层共用);**语义归属分层**:`scopeId`
+   是 cordis isolate 语义(基座桥),`sessionId`/`turnId` 是 dsh 会话语义
+   (dsh 面,基座桥只透传不解释)。
+
+### 三之二、词汇归属表(v3.2 新增)
+
+| 概念 | 层 | 落点 |
+|---|---|---|
+| 帧信封(req/res/ntf + 关联 id + 三预留字段) | 线格式 | `rutis-cordis`(一处定义) |
+| 事件分发 mode(emit/parallel/serial) | cordis | `rutis-cordis`(事件总线四分发语义) |
+| waterfall kind(decide/around/stream) | cordis | `rutis-cordis`(同上,§五 类型学) |
+| plugin 装载/同名仲裁/幂等重载 | cordis | `rutis-cordis`(loader 语义) |
+| `base`(min-cordis/cordis)、loader 能力集 | cordis | `rutis-cordis` hello |
+| `scopeId`(isolate) | cordis | `rutis-cordis` |
+| `dshSemver`、dsh 服务集(injects 求差) | dsh | `rutis-dsh`(hello 的 `dsh` 节) |
+| `sessionId`/`turnId` 语义 | dsh | `rutis-dsh` |
+| llm 缝(`svc/define` 的 llm 面 → aimux) | dsh | `rutis-dsh` |
+| `agent/*` 等事件类型映射、活对象替身 | dsh | `rutis-dsh` |
+| `host/restart` 的宿主重启编排 | dsh | `rutis-dsh`(基座桥提供进程句柄) |
 
 ### 方法表(v1.1)
 
@@ -241,8 +277,9 @@ TS loop 自跑完整管线;编排方向若启用,必须先裁决管线权威(评
 
 | 件 | 位置 | 依赖 | 量级 |
 |---|---|---|---|
-| 协议层(双向并发 RPC + 流 + fd3/socket) | `crates/rutis-dsh/src/proto.rs` | 仅 rutis | 数百行 |
-| 桥本体(host / llm 缝 / 事件缝 / 事件类型映射 / 替身表 / engine 预留) | `crates/rutis-dsh` | **rutis + aimux,不依赖 rutis-agent** | ~1.5k 行含测试 |
+| 协议层(双向并发 RPC + 流 + fd3/socket) | `crates/rutis-cordis/src/rpc.rs` | 仅 rutis | 数百行 |
+| 基座桥词汇(装载仲裁/事件 mode/wf kind/hello 基座校验/scopeId) | `crates/rutis-cordis` | **仅 rutis,零 dsh 知识** | ~0.5k 行含测试 |
+| dsh 面(llm 缝/事件类型映射/替身表/dshSemver/engine 预留) | `crates/rutis-dsh` | **rutis-cordis + aimux** | ~1k 行含测试 |
 | TS 宿主(基座 + 全栈组合 + aimux adapter + evt 转发) | `host/`(npm,本仓库内) | min-cordis(首选)/ vendor cordis(回退) | ~600–1000 行 |
 | ~~薄适配层 `rutis-dsh-agent`~~ | — | — | **v3 删除** |
 
