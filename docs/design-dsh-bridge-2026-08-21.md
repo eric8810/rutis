@@ -7,6 +7,9 @@
 > waterfall 类型学、M0 重排、保真分级、M7 前移)。
 > 依据:方向讨论三连、D31、[design-dual-core-2026-08-20.md](design-dual-core-2026-08-20.md)、
 > 生态实测数据([plugin-reference](../deepseek-harness/plugin-reference/))与评审复算。
+> **2026-08-22 M0 已执行:两问全通(含官方 pwsh loader-composition spec 原样
+> 真进程复验),基座裁决 = min-cordis;评审 §B 的"loader 分叉点"担忧不成立。
+> 实验记录:[experiment-m0-min-cordis-2026-08-22.md](experiment-m0-min-cordis-2026-08-22.md)。**
 
 ## 一、目标、层次纪律与口径
 
