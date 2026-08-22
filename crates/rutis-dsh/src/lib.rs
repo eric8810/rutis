@@ -1,11 +1,14 @@
 //! rutis-dsh:dsh 桥的 dsh 面(设计:docs/design-dsh-bridge-2026-08-21.md v3.2)。
 //!
 //! 层次纪律:本 crate 是 **dsh 关系的唯一所在**——dshSemver、dsh 服务集、
-//! 会话字段(sessionId/turnId)语义、后续波次的 llm 缝(aimux)与事件类型
-//! 映射/替身表。骑在 [`rutis_cordis`] 基座桥上;与 `rutis-agent` 互不依赖。
+//! 会话字段(sessionId/turnId)语义、llm 缝(aimux)与事件类型映射/替身表。
+//! 骑在 [`rutis_cordis`] 基座桥上;与 `rutis-agent` 互不依赖。
 //!
-//! M1 阶段的内容:hello 的 `dsh` 节(`{dshSemver, services}`)解析、校验
-//! 与装载期求差。llm 缝/事件映射按依赖顺序在 M2 进入。
+//! - [`dsh 节`](#structs):hello 的 `dsh` 节解析、校验与装载期求差(M1)。
+//! - [`llm`]:llm 缝——TS 侧 dsh adapter 的 stream 过线 → aimux,chunk 以
+//!   ntf 流回传(M2-3)。
+
+pub mod llm;
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -14,6 +17,8 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use rutis_cordis::ExpectedHost;
+
+pub use llm::LlmSeam;
 
 /// dsh 部署在 hello 里附加的 `dsh` 节(§三 规则 1 v3.2:纯 cordis 宿主
 /// 不带此节)。
