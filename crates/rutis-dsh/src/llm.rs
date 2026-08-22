@@ -139,14 +139,28 @@ impl LlmSeam {
             .cloned()
             .unwrap_or_else(|| json!({}));
         let options = map_generate_options(&generate)?;
-        let result = self
-            .model
-            .do_stream(&options)
-            .await
-            .map_err(|e| RemoteError { code: "llmStream".into(), message: e.to_string() })?;
+        // 请求侧入口日志(proxy 可观察性):每次过线调用一行入口 + 一行
+        // 出口,stderr 不占 dsh 的 stdout 交互面。
+        eprintln!(
+            "[rutis-dsh] llm/stream id={id} provider={} model={} msgs={} tools={} system={}",
+            generate.get("provider").and_then(Value::as_str).unwrap_or("-"),
+            generate.get("model").and_then(Value::as_str).unwrap_or("-"),
+            generate.get("messages").and_then(Value::as_array).map(Vec::len).unwrap_or(0),
+            generate.get("tools").and_then(Value::as_array).map(Vec::len).unwrap_or(0),
+            if generate.get("system").is_some() { "yes" } else { "no" },
+        );
+        let result = match self.model.do_stream(&options).await {
+            Ok(result) => result,
+            Err(e) => {
+                eprintln!("[rutis-dsh] llm/stream id={id} failed: {e}");
+                return Err(RemoteError { code: "llmStream".into(), message: e.to_string() })
+            }
+        };
         let mut stream = result.stream;
         let mut finish = Value::Null;
+        let mut chunks: u64 = 0;
         while let Some(part) = stream.next().await {
+            chunks += 1;
             let part = part.map_err(|e| RemoteError {
                 code: "llmStreamPart".into(),
                 message: e.to_string(),
@@ -161,6 +175,13 @@ impl LlmSeam {
                 .await
                 .map_err(|e| RemoteError { code: "hostGone".into(), message: e.to_string() })?;
         }
+        let finish_kind = finish
+            .get("Finish")
+            .and_then(|f| f.get("finish_reason"))
+            .and_then(|r| r.get("unified"))
+            .and_then(Value::as_str)
+            .unwrap_or("-");
+        eprintln!("[rutis-dsh] llm/stream id={id} done chunks={chunks} finish={finish_kind}");
         Ok(json!({ "finish": finish }))
     }
 }

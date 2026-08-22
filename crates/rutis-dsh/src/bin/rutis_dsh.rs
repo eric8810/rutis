@@ -22,6 +22,11 @@ use serde_json::json;
 
 #[tokio::main]
 async fn main() {
+    // 无声退出取证:被外部杀(Smart App Control 等)不会有任何输出,
+    // panic 与正常返回都必须留下最后一行日志。
+    std::panic::set_hook(Box::new(|info| {
+        eprintln!("[rutis-dsh] PANIC: {info}");
+    }));
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str) {
         Some("up") => up().await,
@@ -33,6 +38,7 @@ async fn main() {
             std::process::exit(2)
         }
     }
+    eprintln!("[rutis-dsh] runner exiting");
 }
 
 /// 极简空白分割(引用段不支持;路径含空格时 RUTIS_DSH_BIN 需自身可执行)。
