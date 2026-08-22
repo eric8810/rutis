@@ -1954,6 +1954,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rutis-dsh"
+version = "0.1.0"
+dependencies = [
+ "rutis",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+]
+
+[[package]]
 name = "ryu"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
