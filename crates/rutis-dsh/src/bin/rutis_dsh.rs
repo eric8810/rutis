@@ -14,6 +14,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use aimux_core::language_model::LanguageModel;
+use aimux_core::options::CallOptions;
+use aimux_core::result::{GenerateResult, StreamResult};
 use rutis_cordis::{Bridge, BridgeConfig, ExpectedHost, InboundHooks, TcpWire};
 use rutis_dsh::LlmSeam;
 use serde_json::json;
@@ -38,14 +40,49 @@ fn shell_split(s: &str) -> Vec<String> {
     s.split_whitespace().map(str::to_owned).collect()
 }
 
+/// 未配置的模型占位:构造失败(如缺 key)不阻止宿主启动——web 界面、
+/// 插件管理都不需要 key;真正的模型调用发生时,错误经桥回传到 dsh 的
+/// 界面显示(§十.4 精神:桥侧问题不拖垮 TS 栈)。
+struct UnconfiguredModel {
+    reason: String,
+}
+
+#[async_trait::async_trait]
+impl LanguageModel for UnconfiguredModel {
+    fn provider(&self) -> &str {
+        "unconfigured"
+    }
+
+    fn model_id(&self) -> &str {
+        "unconfigured"
+    }
+
+    async fn do_generate(
+        &self,
+        _options: &CallOptions,
+    ) -> Result<GenerateResult, aimux_core::error::AiMuxError> {
+        Err(aimux_core::error::AiMuxError::Other(self.reason.clone()))
+    }
+
+    async fn do_stream(
+        &self,
+        _options: &CallOptions,
+    ) -> Result<StreamResult, aimux_core::error::AiMuxError> {
+        Err(aimux_core::error::AiMuxError::Other(self.reason.clone()))
+    }
+}
+
 async fn up() {
     let provider_name = std::env::var("AIMUX_PROVIDER").unwrap_or_else(|_| "deepseek".into());
     let model_id = std::env::var("AIMUX_MODEL").unwrap_or_else(|_| "deepseek-chat".into());
     let model: Arc<dyn LanguageModel> = match aimux_providers::provider(&provider_name, None, &model_id, None) {
         Ok(model) => Arc::from(model),
         Err(e) => {
-            eprintln!("[rutis-dsh] build {provider_name}/{model_id}: {e}");
-            std::process::exit(1)
+            eprintln!("[rutis-dsh] model not configured ({provider_name}/{model_id}: {e}) —");
+            eprintln!("[rutis-dsh] the host still boots (web/plugin management need no key);");
+            eprintln!("[rutis-dsh] model calls will surface this error on the dsh side.");
+            eprintln!("[rutis-dsh] set the provider key (e.g. DEEPSEEK_API_KEY) and restart to enable them.");
+            Arc::new(UnconfiguredModel { reason: format!("provider {provider_name}/{model_id} not configured: {e}") })
         }
     };
     let dsh_bin = std::env::var("RUTIS_DSH_BIN").unwrap_or_else(|_| "dsh".into());
