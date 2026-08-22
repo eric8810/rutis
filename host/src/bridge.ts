@@ -77,7 +77,7 @@ export function connectBridge(port: number): BridgeConnection {
   }
 }
 
-function mapFinishReason(finish: Record<string, unknown> | undefined): { kind: string } {
+function mapFinishReason(finish: Record<string, unknown> | undefined): import('@deepseek-ai/dsh-llm').FinishReason {
   switch (finish?.unified) {
     case 'tool-calls': return { kind: 'tool-calls' }
     case 'length': return { kind: 'max-tokens' }

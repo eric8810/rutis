@@ -1,0 +1,138 @@
+# rutis-bridge npm 发布:tag rutis-bridge-v* 触发。
+# 平台矩阵构建 rutis-dsh 二进制 → 各平台 npm 子包(rutis-bridge-<plat>) →
+# 主包(预编译 JS + patch + bin wrapper)→ 全家 npm publish(NPM_TOKEN)。
+# 主包 package.json 的 version 必须与 tag 版本一致(发布前 npm version 提交)。
+# linux-musl 沿用 rutis-musl-cross 容器(release.yml 的既定裁决)。
+
+name: bridge-release
+
+on:
+  push:
+    tags: ["rutis-bridge-v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  platform:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-2022, target: x86_64-pc-windows-msvc, pkg: rutis-bridge-win32-x64, os-field: win32, cpu: x64, bin: rutis-dsh.exe }
+          - { os: ubuntu-24.04, target: x86_64-unknown-linux-gnu, pkg: rutis-bridge-linux-x64-gnu, os-field: linux, cpu: x64, bin: rutis-dsh }
+          - { os: ubuntu-24.04, target: x86_64-unknown-linux-musl, container: messense/rust-musl-cross:x86_64-musl, pkg: rutis-bridge-linux-x64-musl, os-field: linux, cpu: x64, bin: rutis-dsh }
+          - { os: macos-14, target: x86_64-apple-darwin, pkg: rutis-bridge-darwin-x64, os-field: darwin, cpu: x64, bin: rutis-dsh }
+          - { os: macos-14, target: aarch64-apple-darwin, pkg: rutis-bridge-darwin-arm64, os-field: darwin, cpu: arm64, bin: rutis-dsh }
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install rust toolchain
+        if: matrix.container == ''
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          target: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: add musl target (container)
+        if: matrix.container != ''
+        run: rustup target add ${{ matrix.target }}
+
+      - name: build
+        run: cargo build --release -p rutis-dsh --target ${{ matrix.target }}
+
+      - name: package npm tarball
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#rutis-bridge-v}"
+          mkdir -p "pkg/${{ matrix.pkg }}"
+          BUILT="target/${{ matrix.target }}/release/${{ matrix.bin }}"
+          [ -f "$BUILT" ] || BUILT="target/release/${{ matrix.bin }}"
+          cp "$BUILT" "pkg/${{ matrix.pkg }}/"
+          chmod +x "pkg/${{ matrix.pkg }}/${{ matrix.bin }}" || true
+          cat > "pkg/${{ matrix.pkg }}/package.json" <<EOF
+          {
+            "name": "${{ matrix.pkg }}",
+            "version": "${VERSION}",
+            "description": "Platform binary for rutis-bridge (rutis-dsh runner, ${{ matrix.os-field }}-${{ matrix.cpu }})",
+            "license": "MIT",
+            "os": ["${{ matrix.os-field }}"],
+            "cpu": ["${{ matrix.cpu }}"],
+            "rutisBinary": "${{ matrix.bin }}"
+          }
+          EOF
+          cd "pkg/${{ matrix.pkg }}" && npm pack --pack-destination ../..
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.pkg }}
+          path: pkg/*.tgz
+
+  main:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: version must match the tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#rutis-bridge-v}"
+          PKG=$(node -p "require('./host/package.json').version")
+          [ "$VERSION" = "$PKG" ] || { echo "host/package.json version $PKG != tag $VERSION"; exit 1; }
+
+      - name: build plugin js + types
+        run: |
+          cd host
+          npm ci
+          npm run build
+
+      - name: pack
+        run: cd host && npm pack --pack-destination .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rutis-bridge-main
+          path: host/rutis-bridge-*.tgz
+
+  publish:
+    needs: [platform, main]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: publish platform packages then main
+        run: |
+          set -e
+          ls dist/
+          # 平台包先行(主包的 optionalDependencies 指向它们);
+          # 主包 tarball 名形如 rutis-bridge-<version>(数字紧跟短横)。
+          MAIN_TGZ=""
+          for tgz in dist/*.tgz; do
+            base=$(basename "$tgz" .tgz)
+            if [[ "$base" =~ ^rutis-bridge-[0-9] ]]; then
+              MAIN_TGZ="$tgz"
+            else
+              npm publish "$tgz" --access public
+            fi
+          done
+          npm publish "$MAIN_TGZ" --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

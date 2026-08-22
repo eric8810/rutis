@@ -1,17 +1,29 @@
 {
   "name": "rutis-bridge",
-  "description": "TS-side bridge plugin for the rutis dsh bridge: llm adapter across to Rust (aimux) + event forwarding, as a dsh profile bundle",
+  "description": "TS-side bridge plugin for the rutis dsh bridge: llm adapter across to Rust (aimux) + event forwarding, as a dsh profile bundle; ships the rutis-dsh runner via platform packages",
   "version": "0.1.0",
-  "private": true,
+  "license": "MIT",
   "type": "module",
   "main": "lib/plugin.js",
+  "types": "lib/types/plugin.d.ts",
+  "bin": {
+    "rutis-bridge": "bin/rutis-bridge.mjs"
+  },
   "exports": {
-    ".": "./src/plugin.ts",
+    ".": {
+      "types": "./lib/types/plugin.d.ts",
+      "default": "./lib/plugin.js"
+    },
     "./cordis.patch.yml": "./cordis.patch.yml",
-    "./src/*": "./src/*",
     "./package.json": "./package.json"
   },
+  "files": [
+    "lib",
+    "bin",
+    "cordis.patch.yml"
+  ],
   "scripts": {
+    "build": "esbuild src/plugin.ts --bundle --format=esm --platform=node --outfile=lib/plugin.js --external:@deepseek-ai/* && tsc",
     "acceptance": "node --import tsx src/main.ts"
   },
   "dsh": {
@@ -23,9 +35,19 @@
     "@deepseek-ai/cordis": "4.0.1",
     "@deepseek-ai/dsh-llm": "0.1.1-rc.2"
   },
+  "optionalDependencies": {
+    "rutis-bridge-win32-x64": "0.1.0",
+    "rutis-bridge-linux-x64-gnu": "0.1.0",
+    "rutis-bridge-linux-x64-musl": "0.1.0",
+    "rutis-bridge-darwin-x64": "0.1.0",
+    "rutis-bridge-darwin-arm64": "0.1.0"
+  },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.1",
     "@deepseek-ai/dsh-llm": "0.1.1-rc.2",
-    "tsx": "^4.20.0"
+    "@types/node": "^26.2.0",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.20.0",
+    "typescript": "^7.0.2"
   }
 }

@@ -31,9 +31,11 @@ export function apply(ctx: Context, config: Config = {}): void {
   const conn = connectBridge(port)
 
   // 事件缝:声明的事件 → evt/emit 过线。订阅先建(装载期事件也能过线),
-  // 载荷以 JSON 快照过境(活对象替身是 L4 范围)。
+  // 载荷以 JSON 快照过境(活对象替身是 L4 范围)。名字来自配置,cordis 的
+  // Events 键约束在装载边界放行。
+  const on = ctx.on as unknown as (name: string, listener: (...args: unknown[]) => void) => void
   for (const eventName of config.forwardEvents ?? []) {
-    ctx.on(eventName, (...args: unknown[]) => {
+    on(eventName, (...args: unknown[]) => {
       const payload = args.length <= 1 ? args[0] : args
       conn.send({ type: 'ntf', method: 'evt/emit', params: { event: eventName, params: safeJson(payload) } })
     })
@@ -41,8 +43,6 @@ export function apply(ctx: Context, config: Config = {}): void {
 
   // llm 缝:桥 adapter 以 adapter 身份进入官方 LlmRuntime。
   ctx.llm.registerAdapter([route], new BridgeAdapter(conn))
-
-  ctx.on('dispose', () => conn.close())
 }
 
 function safeJson(value: unknown): unknown {
