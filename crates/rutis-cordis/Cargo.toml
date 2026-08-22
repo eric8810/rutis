@@ -1,6 +1,6 @@
 [package]
-name = "rutis-dsh"
-description = "dsh bridge face (Rust side): dsh node validation, llm seam, event mapping"
+name = "rutis-cordis"
+description = "Cordis base bridge (Rust side): transport, RPC mechanics, cordis protocol vocabulary"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,10 +9,7 @@ rust-version.workspace = true
 
 [dependencies]
 rutis = { path = "../rutis" }
-rutis-cordis = { path = "../rutis-cordis" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# aimux 在 llm 缝(M2)进入;M1 的 dsh 面尚不需要。
-
-[dev-dependencies]
 tokio = { workspace = true }
+thiserror = { workspace = true }

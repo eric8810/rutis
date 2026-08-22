@@ -83,3 +83,28 @@ res 前 call 已以 Timeout 结算)/握手错配(protocol+semver 两路)/能力�
 依赖 = rutis + serde/serde_json/tokio/thiserror,无 rutis-agent、无
 aimux,层次纪律(§一/§八)成立;rutis 实际用量为 `BoxFuture` 别名。
 导出面 17 项,克制。
+
+---
+
+## 复验记录(2026-08-22,v3.2 两级桥重组后)
+
+评审促发的架构裁决(桥分两级,设计 v3.2)与修补同批落位,`cargo test
+-p rutis-cordis -p rutis-dsh` = **17 + 4 全绿**:
+
+| 发现 | 处置 | 落点 |
+|---|---|---|
+| Z1 三字段预留 | ✅ 已修:`Frame` 三类帧均带 `scopeId`/`sessionId`/`turnId`(线格式一处定义,语义分层:scopeId=基座桥解释,session/turn=dsh 面解释);往返测试镜像 | rutis-cordis rpc.rs + `frame_reserved_fields_roundtrip` |
+| F1 首帧纪律 | ✅ 已修:connecting 检查提到 match 之上,Req/Ntf/Res 三类非 hello 首帧一律 Failed 终态(Req 违规回 error res,Ntf/Res 无可归属请求方直接断开);新增 Ntf/Res 首帧测试 | rpc.rs pump + `first_frame_ntf_rejected` / `first_frame_res_rejected` |
+| F2 死变体 | ✅ 已修:`CallSettled::Cancelled` 结算变体,取消以 `ProtoError::Cancelled{id,method}` 交付,与远端错误可区分 | `cancel_settles_as_cancelled_and_late_res_counts_orphan` |
+| F3 影子测试 | ✅ 已强化:res 扣住直至 evt 实际抵达钩子(5s 超时门),"泵不阻塞"成为被断言语义 | `reentrant_events_processed_before_call_settles` |
+| F4 状态门 | ✅ 已修:`notify`/`cancel` 复用 `check_open`,终态后拒绝 | `host_death_...` 尾部断言 |
+| F5 WfKind 预留 | ✅ 已修:`WfKind{Decide,Around,Stream}` + `WfDeclaration` 落 cordis 词汇层(归属由 v3.2 裁决:waterfall 是 cordis 语义)+ 值域封闭测试 | `wf_kind_three_shapes_frozen` |
+| S2 空 result | ✅ 已修:`ok:true` 缺 result 宽容为 `Null` | `Frame::outcome` |
+| S3 双实现 | ✅ 已修:泵复用 `Frame::outcome()` | pump Res 臂 |
+| D2 protocol 回显 | ✅ 已修:hello 回包回显 `protocol` | `handshake_replies_symmetric_capability_set` |
+| F6 §十.2 复核 | ⏸ 挂起:复核依赖的 `plugin-reference/raw` 语料数据本机 dsh 仓缺失(M0 时已发现);**M1.5 前必须找回或重扫语料并落一行结论** | — |
+
+**M1 在两级桥结构下签字**(2026-08-22):验收行全部由 rutis-cordis 的
+17 项机制测试覆盖,dsh 节两级握手由 rutis-dsh 的 4 项测试覆盖;Z1/F1
+放行条件与 F2/F4/F5/S2/S3/D2 修补全部落位,F6 作为 M1.5 的硬前置挂起
+记录在案。

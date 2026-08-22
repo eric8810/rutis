@@ -1,12 +1,13 @@
-//! M1 验收(设计 §九 M1 行):内存 wire 下内核原语全套——往返、并发、
-//! 取消(含迟到 res 丢弃)、超时、握手错配与能力集求差、同名仲裁、重入、
-//! 杀宿主 → 仅失 llm 缝且观察连续性记录在案。零 Node。
+//! M1 验收(设计 §九 M1 行),机制层:内存 wire 下内核原语全套——往返、
+//! 并发、取消(含迟到 res 丢弃)、超时、握手错配与能力集求差、同名仲裁、
+//! 重入、杀宿主 → 仅失 llm 缝且观察连续性记录在案。零 Node,零 dsh 知识
+//! (dsh 节校验的测试在 rutis-dsh crate)。
 
 use std::sync::{Arc, Mutex};
 
-use rutis_dsh::{
+use rutis_cordis::{
     Bridge, BridgeConfig, CancelTarget, EvtDeclaration, EvtMode, ExpectedHost, Frame, InboundHooks,
-    MemoryWire, PeerCaps, PluginLedger, ProtoError, Wire,
+    MemoryWire, PeerCaps, PluginLedger, ProtoError, WfDeclaration, WfKind, Wire,
 };
 use serde_json::{json, Value};
 
@@ -22,30 +23,30 @@ impl TestHost {
 
     async fn reply_ok(&self, id: u64, result: Value) {
         self.wire
-            .send(Frame::Res { id, ok: true, result: Some(result), error: None })
-            .await
-            .expect("send res ok");
-    }
-
-    async fn reply_err(&self, id: u64, code: &str, message: &str) {
-        self.wire
             .send(Frame::Res {
                 id,
-                ok: false,
-                result: None,
-                error: Some(rutis_dsh::RemoteError {
-                    code: code.to_owned(),
-                    message: message.to_owned(),
-                }),
+                ok: true,
+                result: Some(result),
+                error: None,
+                scope_id: None,
+                session_id: None,
+                turn_id: None,
             })
             .await
-            .expect("send res err");
+            .expect("send res ok");
     }
 
     /// 宿主发起一次 hello 握手(§三 规则 1:宿主首发),返回桥的回包。
     async fn hello(&self, declaration: Value) -> Value {
         self.wire
-            .send(Frame::Req { id: 1, method: "hello".into(), params: declaration, scope_id: None })
+            .send(Frame::Req {
+                id: 1,
+                method: "hello".into(),
+                params: declaration,
+                scope_id: None,
+                session_id: None,
+                turn_id: None,
+            })
             .await
             .expect("send hello");
         let frame = self.next().await;
@@ -56,13 +57,12 @@ impl TestHost {
         result.expect("hello result payload")
     }
 
-    /// 完成一次合法握手:发 `hello` 声明,收桥的对称能力集。
+    /// 完成一次合法握手:发 `hello` 声明,收桥的对称回包。
     async fn hello_ok(&self, caps: Value) -> Value {
         self.hello(json!({
             "protocol": 1,
             "base": "min-cordis",
             "baseSemver": "0.1.0",
-            "dshSemver": "0.1.1-rc.2",
             "stack": ["node"],
             "caps": caps,
         }))
@@ -74,24 +74,24 @@ fn caps(services: &[&str]) -> Value {
     json!({ "services": services, "wfKinds": [], "scopes": [] })
 }
 
-/// 标准会话:握手完成,桥侧 Ready。
-async fn setup() -> (Bridge, TestHost) {
+/// 标准会话:握手完成,桥侧 Ready。返回(桥, 宿主, 宿主 hello 原始参数)。
+async fn setup() -> (Bridge, TestHost, Value) {
     setup_with(ExpectedHost::protocol(1)).await
 }
 
-async fn setup_with(expected: ExpectedHost) -> (Bridge, TestHost) {
+async fn setup_with(expected: ExpectedHost) -> (Bridge, TestHost, Value) {
     let (bridge_wire, host_wire) = MemoryWire::pair(64);
     let mut bridge = Bridge::start(
         Box::new(bridge_wire),
         BridgeConfig::default(),
         InboundHooks::default(),
         expected,
-        PeerCaps::default(),
+        json!({ "services": ["observe"], "wfKinds": [], "scopes": [] }),
     );
     let host = TestHost { wire: host_wire };
     host.hello_ok(caps(&["tools", "shell", "systemPrompt"])).await;
-    bridge.ready().await.expect("handshake");
-    (bridge, host)
+    let params = bridge.ready().await.expect("handshake");
+    (bridge, host, params)
 }
 
 // ---------------------------------------------------------------------------
@@ -100,7 +100,7 @@ async fn setup_with(expected: ExpectedHost) -> (Bridge, TestHost) {
 
 #[tokio::test]
 async fn roundtrip_ok_and_remote_error() {
-    let (bridge, host) = setup().await;
+    let (bridge, host, _) = setup().await;
 
     let ok = tokio::spawn({
         let bridge = bridge.clone();
@@ -116,12 +116,26 @@ async fn roundtrip_ok_and_remote_error() {
 
     let err = tokio::spawn({
         let bridge = bridge.clone();
-        async move { bridge.request("svc/call", json!({} ), None).await }
+        async move { bridge.request("svc/call", json!({}), None).await }
     });
     let Frame::Req { id: id_err, .. } = host.next().await else {
         panic!("expected req")
     };
-    host.reply_err(id_err, "notFound", "service missing").await;
+    host.wire
+        .send(rutis_cordis::Frame::Res {
+            id: id_err,
+            ok: false,
+            result: None,
+            error: Some(rutis_cordis::RemoteError {
+                code: "notFound".into(),
+                message: "service missing".into(),
+            }),
+            scope_id: None,
+            session_id: None,
+            turn_id: None,
+        })
+        .await
+        .expect("send res err");
     match err.await.unwrap().unwrap_err() {
         ProtoError::Remote { code, message } => {
             assert_eq!(code, "notFound");
@@ -133,7 +147,7 @@ async fn roundtrip_ok_and_remote_error() {
 
 #[tokio::test]
 async fn concurrent_calls_complete_out_of_order() {
-    let (bridge, host) = setup().await;
+    let (bridge, host, _) = setup().await;
     let mut calls = Vec::new();
     for name in ["a", "b", "c"] {
         calls.push((
@@ -167,8 +181,8 @@ async fn concurrent_calls_complete_out_of_order() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn cancel_drops_call_and_late_res_counts_orphan() {
-    let (bridge, host) = setup().await;
+async fn cancel_settles_as_cancelled_and_late_res_counts_orphan() {
+    let (bridge, host, _) = setup().await;
     let call = tokio::spawn({
         let bridge = bridge.clone();
         async move { bridge.request("svc/call", json!({}), None).await }
@@ -178,9 +192,13 @@ async fn cancel_drops_call_and_late_res_counts_orphan() {
     };
 
     bridge.cancel(CancelTarget::call(id)).await.expect("cancel notify");
+    // 取消以 Cancelled 结算,与远端错误可区分(F2)。
     match call.await.unwrap().unwrap_err() {
-        ProtoError::Remote { code, .. } => assert_eq!(code, "cancelled"),
-        e => panic!("expected cancelled, got {e:?}"),
+        ProtoError::Cancelled { id: cid, method } => {
+            assert_eq!(cid, id);
+            assert_eq!(method, "svc/call");
+        }
+        e => panic!("expected Cancelled, got {e:?}"),
     }
     // 取消通知过线(target 带类型前缀)。
     let Frame::Ntf { method, params, .. } = host.next().await else {
@@ -204,7 +222,7 @@ async fn caller_declared_timeout_fails_without_waiting() {
         config,
         InboundHooks::default(),
         ExpectedHost::protocol(1),
-        PeerCaps::default(),
+        serde_json::json!({}),
     );
     let host = TestHost { wire: host_wire };
     host.hello_ok(caps(&[])).await;
@@ -214,7 +232,7 @@ async fn caller_declared_timeout_fails_without_waiting() {
         let bridge = bridge.clone();
         async move { bridge.request("svc/call", json!({}), Some(40)).await }
     });
-    let Frame::Req { id, method: _, .. } = host.next().await else {
+    let Frame::Req { id, .. } = host.next().await else {
         panic!("expected req")
     };
     match call.await.unwrap().unwrap_err() {
@@ -266,7 +284,7 @@ async fn handshake_protocol_mismatch_fails_at_handshake() {
         BridgeConfig::default(),
         InboundHooks::default(),
         ExpectedHost::protocol(1),
-        PeerCaps::default(),
+        serde_json::json!({}),
     );
     let host = TestHost { wire: host_wire };
     // 宿主声明了桥不认的协议版本:握手期报错(显式 error res + 会话失败)。
@@ -278,10 +296,11 @@ async fn handshake_protocol_mismatch_fails_at_handshake() {
                 "protocol": 2,
                 "base": "min-cordis",
                 "baseSemver": "0.1.0",
-                "dshSemver": "0.1.1-rc.2",
                 "caps": caps(&[]),
             }),
             scope_id: None,
+            session_id: None,
+            turn_id: None,
         })
         .await
         .expect("send hello");
@@ -301,14 +320,14 @@ async fn handshake_protocol_mismatch_fails_at_handshake() {
 }
 
 #[tokio::test]
-async fn handshake_dsh_semver_pin_rejects_drift() {
+async fn handshake_base_pin_rejects_wrong_base() {
     let (bridge_wire, host_wire) = MemoryWire::pair(64);
     let mut bridge = Bridge::start(
         Box::new(bridge_wire),
         BridgeConfig::default(),
         InboundHooks::default(),
-        ExpectedHost { protocol: 1, dsh_semver: Some("0.1.1-rc.2".into()), base: None },
-        PeerCaps::default(),
+        ExpectedHost { protocol: 1, base: Some("min-cordis".into()), verify: None },
+        serde_json::json!({}),
     );
     let host = TestHost { wire: host_wire };
     host.wire
@@ -317,12 +336,13 @@ async fn handshake_dsh_semver_pin_rejects_drift() {
             method: "hello".into(),
             params: json!({
                 "protocol": 1,
-                "base": "min-cordis",
-                "baseSemver": "0.1.0",
-                "dshSemver": "0.2.0-rc.1",
+                "base": "cordis",
+                "baseSemver": "4.0.1",
                 "caps": caps(&[]),
             }),
             scope_id: None,
+            session_id: None,
+            turn_id: None,
         })
         .await
         .expect("send hello");
@@ -330,10 +350,106 @@ async fn handshake_dsh_semver_pin_rejects_drift() {
         panic!("expected error res")
     };
     assert!(!ok);
-    let error = error.expect("error payload");
-    assert!(error.message.contains("dshSemver mismatch"), "{}", error.message);
+    assert!(error.expect("error payload").message.contains("base mismatch"));
     match bridge.ready().await {
-        Err(ProtoError::Handshake(reason)) => assert!(reason.contains("dshSemver")),
+        Err(ProtoError::Handshake(reason)) => assert!(reason.contains("base mismatch")),
+        e => panic!("expected Handshake, got {e:?}"),
+    }
+}
+
+/// F1:首帧纪律对三类帧全覆盖——Ntf 开场即终态拒绝,不静默吞掉。
+#[tokio::test]
+async fn first_frame_ntf_rejected() {
+    let (bridge_wire, host_wire) = MemoryWire::pair(64);
+    let mut bridge = Bridge::start(
+        Box::new(bridge_wire),
+        BridgeConfig::default(),
+        InboundHooks::default(),
+        ExpectedHost::protocol(1),
+        serde_json::json!({}),
+    );
+    let host = TestHost { wire: host_wire };
+    host.wire
+        .send(Frame::Ntf {
+            method: "evt/emit".into(),
+            params: json!({}),
+            scope_id: None,
+            session_id: None,
+            turn_id: None,
+        })
+        .await
+        .expect("send ntf first frame");
+    match bridge.ready().await {
+        Err(ProtoError::Handshake(reason)) => {
+            assert!(reason.contains("first frame must be hello"), "{reason}")
+        }
+        e => panic!("expected Handshake, got {e:?}"),
+    }
+}
+
+/// F1:Res 开场同样终态拒绝。
+#[tokio::test]
+async fn first_frame_res_rejected() {
+    let (bridge_wire, host_wire) = MemoryWire::pair(64);
+    let mut bridge = Bridge::start(
+        Box::new(bridge_wire),
+        BridgeConfig::default(),
+        InboundHooks::default(),
+        ExpectedHost::protocol(1),
+        serde_json::json!({}),
+    );
+    let host = TestHost { wire: host_wire };
+    host.wire
+        .send(Frame::Res {
+            id: 9,
+            ok: true,
+            result: Some(json!({})),
+            error: None,
+            scope_id: None,
+            session_id: None,
+            turn_id: None,
+        })
+        .await
+        .expect("send res first frame");
+    match bridge.ready().await {
+        Err(ProtoError::Handshake(reason)) => {
+            assert!(reason.contains("first frame must be hello"), "{reason}")
+        }
+        e => panic!("expected Handshake, got {e:?}"),
+    }
+}
+
+#[tokio::test]
+async fn first_frame_req_must_be_hello() {
+    let (bridge_wire, host_wire) = MemoryWire::pair(64);
+    let mut bridge = Bridge::start(
+        Box::new(bridge_wire),
+        BridgeConfig::default(),
+        InboundHooks::default(),
+        ExpectedHost::protocol(1),
+        serde_json::json!({}),
+    );
+    let host = TestHost { wire: host_wire };
+    host.wire
+        .send(Frame::Req {
+            id: 1,
+            method: "evt/on".into(),
+            params: json!({}),
+            scope_id: None,
+            session_id: None,
+            turn_id: None,
+        })
+        .await
+        .expect("send non-hello first frame");
+    let Frame::Res { ok, error, .. } = host.next().await else {
+        panic!("expected error res")
+    };
+    assert!(!ok);
+    assert!(error.expect("error payload").message.contains("first frame must be hello"));
+    match bridge.ready().await {
+        Err(ProtoError::Handshake(reason)) => {
+            assert!(reason.contains("first frame must be hello"), "{reason}")
+        }
         e => panic!("expected Handshake, got {e:?}"),
     }
 }
@@ -346,50 +462,25 @@ async fn handshake_replies_symmetric_capability_set() {
         BridgeConfig::default(),
         InboundHooks::default(),
         ExpectedHost::protocol(1),
-        PeerCaps {
-            services: ["llm"].into_iter().map(str::to_owned).collect(),
-            wf_kinds: vec!["decide".into()],
-            scopes: vec!["session".into()],
-        },
+        json!({ "services": ["llm"], "wfKinds": ["decide"], "scopes": ["session"] }),
     );
     let host = TestHost { wire: host_wire };
     let reply = host.hello_ok(caps(&["tools"])).await;
+    // 回显 protocol 供宿主对称验证(D2)。
+    assert_eq!(reply["protocol"], 1);
     assert_eq!(reply["base"], "rutis");
-    assert_eq!(reply["dshSemver"], "0.1.1-rc.2");
     assert_eq!(reply["caps"]["services"], json!(["llm"]));
     assert_eq!(reply["caps"]["wfKinds"], json!(["decide"]));
-    let peer = bridge.ready().await.expect("handshake");
+    let params = bridge.ready().await.expect("handshake");
+    let peer = PeerCaps::from_hello_params(&params).expect("parse caps");
     assert_eq!(peer.services, ["tools"].into_iter().map(str::to_owned).collect());
 }
 
 #[tokio::test]
-async fn first_frame_must_be_hello() {
-    let (bridge_wire, host_wire) = MemoryWire::pair(64);
-    let mut bridge = Bridge::start(
-        Box::new(bridge_wire),
-        BridgeConfig::default(),
-        InboundHooks::default(),
-        ExpectedHost::protocol(1),
-        PeerCaps::default(),
-    );
-    let host = TestHost { wire: host_wire };
-    host.wire
-        .send(Frame::Req { id: 1, method: "evt/on".into(), params: json!({}), scope_id: None })
-        .await
-        .expect("send non-hello first frame");
-    match bridge.ready().await {
-        Err(ProtoError::Handshake(reason)) => {
-            assert!(reason.contains("first frame must be hello"), "{reason}")
-        }
-        e => panic!("expected Handshake, got {e:?}"),
-    }
-}
-
-#[tokio::test]
 async fn capability_diff_rejects_load_with_missing_services() {
-    let (mut bridge, _host) = setup().await;
+    let (_, _, params) = setup().await;
     // 握手声明的宿主能力集(services = tools/shell/systemPrompt)。
-    let peer = bridge.ready().await.expect("still ready");
+    let peer = PeerCaps::from_hello_params(&params).expect("parse caps");
     // plugin/load 申报 injects 与宿主能力集求差,差集非空即显式拒绝。
     let missing = peer.missing_services(["tools", "approval", "jobs"]);
     assert_eq!(missing, vec!["approval".to_string(), "jobs".to_string()]);
@@ -427,17 +518,20 @@ fn plugin_ledger_arbitration() {
 // 重入(§十.6:llm 缝执行中 evt 回流)
 // ---------------------------------------------------------------------------
 
+/// F3 强化:res 被**扣住**,直到 evt 实际抵达钩子才放行——证明泵没有
+/// 等待在飞调用,事件在应答未到时已被分发。
 #[tokio::test]
-async fn reentrant_events_flow_while_call_in_flight() {
-    let seen: Arc<Mutex<Vec<&'static str>>> = Arc::new(Mutex::new(Vec::new()));
-    let notify_seen = Arc::clone(&seen);
+async fn reentrant_events_processed_before_call_settles() {
+    let (seen_tx, mut seen_rx) = tokio::sync::mpsc::channel::<()>(1);
+    let notify_seen = Arc::new(Mutex::new(seen_tx));
     let hooks = InboundHooks {
         on_notify: Some(Arc::new(move |method, _params| {
             Box::pin({
                 let notify_seen = Arc::clone(&notify_seen);
                 async move {
                     if method == "evt/emit" {
-                        notify_seen.lock().unwrap().push("evt");
+                        let signal = notify_seen.lock().unwrap().clone();
+                        signal.send(()).await.expect("signal test");
                     }
                 }
             })
@@ -450,7 +544,7 @@ async fn reentrant_events_flow_while_call_in_flight() {
         BridgeConfig::default(),
         hooks,
         ExpectedHost::protocol(1),
-        PeerCaps::default(),
+        serde_json::json!({}),
     );
     let host = TestHost { wire: host_wire };
     host.hello_ok(caps(&[])).await;
@@ -463,20 +557,26 @@ async fn reentrant_events_flow_while_call_in_flight() {
     let Frame::Req { id, .. } = host.next().await else {
         panic!("expected req")
     };
-    // 调用在飞期间,宿主回流事件:泵不因等待 res 而阻塞。
+    // 调用在飞期间宿主回流事件,且**先不回应答**。
     host.wire
-        .send(Frame::Ntf { method: "evt/emit".into(), params: json!({ "event": "agent/tool-call" }), scope_id: None })
+        .send(Frame::Ntf {
+            method: "evt/emit".into(),
+            params: json!({ "event": "agent/tool-call" }),
+            scope_id: None,
+            session_id: None,
+            turn_id: None,
+        })
         .await
         .expect("send evt");
+    // res 仍在扣住状态:evt 必须已经抵达钩子,否则这里 5s 超时失败——
+    // 这就是"泵不阻塞"的直接证明。
+    tokio::time::timeout(std::time::Duration::from_secs(5), seen_rx.recv())
+        .await
+        .expect("evt processed while res withheld")
+        .expect("hook alive");
+    // 现在才放行 res,调用正常完成。
     host.reply_ok(id, json!({ "turn": "done" })).await;
     assert_eq!(call.await.unwrap().unwrap()["turn"], "done");
-    for _ in 0..50 {
-        if seen.lock().unwrap().len() == 1 {
-            break
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-    }
-    assert_eq!(*seen.lock().unwrap(), vec!["evt"]);
 }
 
 // ---------------------------------------------------------------------------
@@ -485,13 +585,12 @@ async fn reentrant_events_flow_while_call_in_flight() {
 
 #[tokio::test]
 async fn host_death_fails_pending_calls_and_records_continuity() {
-    let (mut bridge, host) = setup().await;
+    let (mut bridge, host, _) = setup().await;
     let mut calls = Vec::new();
-    for name in ["llm-call", "llm-call-2"] {
+    for _ in 0..2 {
         calls.push(tokio::spawn({
             let bridge = bridge.clone();
-            let name = name.to_string();
-            async move { bridge.request("svc/call", json!({ "name": name }), None).await }
+            async move { bridge.request("svc/call", json!({}), None).await }
         }));
     }
     for _ in 0..2 {
@@ -513,24 +612,35 @@ async fn host_death_fails_pending_calls_and_records_continuity() {
     assert!(record.pending.iter().all(|(_, m)| m == "svc/call"));
     assert!(record.frames_received >= 1); // 宿主发的 hello(两个 svc/call 是桥发出去的)
 
-    // 死亡后的新调用立即 HostGone,不挂起。
-    assert!(matches!(bridge.request("svc/call", json!({}), None).await, Err(ProtoError::HostGone)));
+    // 死亡后的新调用立即 HostGone,不挂起(F4:notify 同样有终态门)。
+    assert!(
+        matches!(bridge.request("svc/call", json!({}), None).await, Err(ProtoError::HostGone))
+    );
+    assert!(matches!(bridge.notify("evt/emit", json!({})).await, Err(ProtoError::HostGone)));
+    assert!(matches!(
+        bridge.cancel(CancelTarget::call(1)).await,
+        Err(ProtoError::HostGone)
+    ));
 }
 
 // ---------------------------------------------------------------------------
-// 协议字段(§三:scopeId 预留、evt mode)
+// 协议字段(§三:三预留字段、evt mode、wf kind)
 // ---------------------------------------------------------------------------
 
 #[test]
-fn frame_scope_id_reserved_roundtrip() {
+fn frame_reserved_fields_roundtrip() {
     let frame = Frame::Req {
         id: 7,
         method: "svc/call".into(),
         params: json!({}),
-        scope_id: Some("session-42".into()),
+        scope_id: Some("scope-9".into()),
+        session_id: Some("session-42".into()),
+        turn_id: Some("turn-3".into()),
     };
     let wire = serde_json::to_string(&frame).expect("serialize");
-    assert!(wire.contains("\"scopeId\":\"session-42\""), "{wire}");
+    assert!(wire.contains("\"scopeId\":\"scope-9\""), "{wire}");
+    assert!(wire.contains("\"sessionId\":\"session-42\""), "{wire}");
+    assert!(wire.contains("\"turnId\":\"turn-3\""), "{wire}");
     let back: Frame = serde_json::from_str(&wire).expect("deserialize");
     assert_eq!(back, frame);
     // 未声明时字段不出现。
@@ -538,9 +648,11 @@ fn frame_scope_id_reserved_roundtrip() {
         method: "evt/emit".into(),
         params: json!({}),
         scope_id: None,
+        session_id: None,
+        turn_id: None,
     })
     .expect("serialize");
-    assert!(!bare.contains("scopeId"), "{bare}");
+    assert!(!bare.contains("scopeId") && !bare.contains("sessionId") && !bare.contains("turnId"), "{bare}");
 }
 
 #[test]
@@ -556,4 +668,24 @@ fn evt_mode_accepts_three_dispatch_semantics_and_rejects_others() {
     assert_eq!(serial.mode, EvtMode::Serial);
     // waterfall 不是 evt 分发模式(它在 wf/register 的 kind 里)。
     assert!(serde_json::from_value::<EvtDeclaration>(json!({ "name": "x", "mode": "waterfall" })).is_err());
+}
+
+/// F5:wf/register 的 kind 三型是 v1.1 冻结字段,与 evt mode 对称。
+#[test]
+fn wf_kind_three_shapes_frozen() {
+    let decide: WfDeclaration =
+        serde_json::from_value(json!({ "name": "tools/pre-execute", "kind": "decide" }))
+            .expect("decide");
+    assert_eq!(decide.kind, WfKind::Decide);
+    let around: WfDeclaration =
+        serde_json::from_value(json!({ "name": "tools/execute", "kind": "around" }))
+            .expect("around");
+    assert_eq!(around.kind, WfKind::Around);
+    let stream: WfDeclaration =
+        serde_json::from_value(json!({ "name": "agent/text-delta", "kind": "stream" }))
+            .expect("stream");
+    assert_eq!(stream.kind, WfKind::Stream);
+    // kind 值域封闭:未知拒绝,不静默字符串化。
+    assert!(serde_json::from_value::<WfDeclaration>(json!({ "name": "x", "kind": "waterfall" })).is_err());
+    assert!(serde_json::from_value::<WfDeclaration>(json!({ "name": "x", "kind": "emit" })).is_err());
 }

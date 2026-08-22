@@ -1,12 +1,18 @@
-//! 桥协议 v1.1(设计 §三):帧模型、传输抽象、会话状态机。
+//! 桥协议的机制层(设计 v3.2 §八:双向并发 RPC + 流 + 传输抽象)。
 //!
-//! 三类消息双向并发,每条请求带关联 id;全部帧预留 `scopeId`(v1 不过滤——
-//! rutis 内核 D29:事件不按 isolate 过滤,过滤是 dsh 语义,将来由桥端实现)。
+//! 本文件零 dsh 知识:帧信封、关联 id、在飞表、超时、取消、孤儿应答计数、
+//! 会话状态机与 `Wire` 传输接缝。cordis 协议词汇(hello/能力集/事件模式/
+//! wf kind/装载仲裁)在 [`crate::proto`];dsh 语义在 `rutis-dsh` crate。
 //!
-//! M1 用内存 wire 验收全套语义(往返/并发/取消/超时/握手错配与能力集求差/
-//! 同名仲裁/重入/宿主死亡),零 Node;`Wire` 是唯一传输接缝。
+//! 三类消息双向并发,每条请求带关联 id。帧信封集中定义三个预留字段
+//! (设计 §三 规则 6):`scopeId`(cordis isolate 语义,基座桥解释)与
+//! `sessionId`/`turnId`(dsh 会话语义,由 `rutis-dsh` 解释,这里只透传)。
+//! v1 全部不过滤,全局广播。
+//!
+//! M1 用内存 wire 验收全套语义(往返/并发/取消/超时/握手/仲裁/重入/宿主
+//! 死亡),零 Node;fd3 与 unix socket 传输是 M2 对 [`Wire`] 的另一个实现。
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -16,8 +22,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::{mpsc, oneshot, watch};
 
+use crate::proto::{ExpectedHost, HelloCaps};
+
 // ---------------------------------------------------------------------------
-// 帧
+// 帧信封
 // ---------------------------------------------------------------------------
 
 /// 单条协议帧(§三:三类消息,JSON 线格式)。
@@ -32,6 +40,10 @@ pub enum Frame {
         params: Value,
         #[serde(default, skip_serializing_if = "Option::is_none", rename = "scopeId")]
         scope_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none", rename = "sessionId")]
+        session_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none", rename = "turnId")]
+        turn_id: Option<String>,
     },
     /// 被调方 → 调用方:一次调用的应答。`ok` 的真值选择载荷字段。
     Res {
@@ -41,6 +53,12 @@ pub enum Frame {
         result: Option<Value>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<RemoteError>,
+        #[serde(default, skip_serializing_if = "Option::is_none", rename = "scopeId")]
+        scope_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none", rename = "sessionId")]
+        session_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none", rename = "turnId")]
+        turn_id: Option<String>,
     },
     /// 任一侧 → 对侧:通知,无应答。
     Ntf {
@@ -49,6 +67,10 @@ pub enum Frame {
         params: Value,
         #[serde(default, skip_serializing_if = "Option::is_none", rename = "scopeId")]
         scope_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none", rename = "sessionId")]
+        session_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none", rename = "turnId")]
+        turn_id: Option<String>,
     },
 }
 
@@ -60,13 +82,18 @@ pub enum Outcome {
 }
 
 impl Frame {
-    /// 把 `Res` 帧折叠为 [`Outcome`];`ok` 与载荷字段不一致是线格式违规。
+    /// 把 `Res` 帧折叠为 [`Outcome`]。`ok:true` 缺 `result` 宽容为 `Null`
+    /// (方法表里多行结果为"—",宿主对空结果回 `{"ok":true}` 不是线格式
+    /// 违规);载荷与 `ok` 冲突才是违规。非 `Res` 帧返回 `None`。
     pub fn outcome(&self) -> Option<Result<Outcome, ProtoError>> {
         match self {
-            Frame::Res { id, ok, result, error } => Some(match (*ok, result, error) {
+            Frame::Res { id, ok, result, error, .. } => Some(match (*ok, result, error) {
                 (true, Some(result), None) => Ok(Outcome::Ok(result.clone())),
+                (true, None, None) => Ok(Outcome::Ok(Value::Null)),
                 (false, None, Some(error)) => Ok(Outcome::Err(error.clone())),
-                _ => Err(ProtoError::Wire(format!("malformed res frame for id {id}: ok/载荷不一致"))),
+                _ => Err(ProtoError::Wire(format!(
+                    "malformed res frame for id {id}: ok/载荷不一致"
+                ))),
             }),
             _ => None,
         }
@@ -126,63 +153,6 @@ impl Wire for MemoryWire {
 }
 
 // ---------------------------------------------------------------------------
-// 握手面(§三 规则 1:hello + 能力集协商)
-// ---------------------------------------------------------------------------
-
-/// 宿主在 `hello` 里申报的能力集。
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct PeerCaps {
-    #[serde(default)]
-    pub services: BTreeSet<String>,
-    #[serde(default, rename = "wfKinds")]
-    pub wf_kinds: Vec<String>,
-    #[serde(default)]
-    pub scopes: Vec<String>,
-}
-
-impl PeerCaps {
-    /// 装载期能力集求差(§三 规则 1):`injects` 中宿主没有的服务。
-    pub fn missing_services<'a>(&self, injects: impl IntoIterator<Item = &'a str>) -> Vec<String> {
-        injects
-            .into_iter()
-            .filter(|name| !self.services.contains(*name))
-            .map(str::to_owned)
-            .collect()
-    }
-}
-
-/// 宿主 `hello` 参数的完整形状。
-#[derive(Debug, Clone, Deserialize)]
-pub struct HelloCaps {
-    pub protocol: u32,
-    pub base: String,
-    #[serde(rename = "baseSemver")]
-    pub base_semver: String,
-    #[serde(rename = "dshSemver")]
-    pub dsh_semver: String,
-    #[serde(default)]
-    pub stack: Vec<String>,
-    #[serde(default)]
-    pub caps: PeerCaps,
-}
-
-/// Rust 侧对宿主的握手期望(错配在握手期报错,§三 规则 1)。
-#[derive(Debug, Clone)]
-pub struct ExpectedHost {
-    pub protocol: u32,
-    /// `Some` 时要求 `dshSemver` 精确相等(版本声明制的第一道闸)。
-    pub dsh_semver: Option<String>,
-    /// `Some` 时要求 `base` 相等(min-cordis / cordis)。
-    pub base: Option<String>,
-}
-
-impl ExpectedHost {
-    pub fn protocol(protocol: u32) -> ExpectedHost {
-        ExpectedHost { protocol, dsh_semver: None, base: None }
-    }
-}
-
-// ---------------------------------------------------------------------------
 // 取消与超时(§三 规则 4)
 // ---------------------------------------------------------------------------
 
@@ -215,73 +185,6 @@ impl std::fmt::Display for CancelTarget {
             CancelPrefix::Dispatch => "disp",
         };
         write!(f, "{prefix}:{}", self.id)
-    }
-}
-
-// ---------------------------------------------------------------------------
-// 事件申报(§三 规则 5:mode 预留)
-// ---------------------------------------------------------------------------
-
-/// 事件分发模式。v1 底座方向只消费 emit;parallel/serial 为锈化波预留,
-/// 不得静默降级为 ntf。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum EvtMode {
-    Emit,
-    Parallel,
-    Serial,
-}
-
-/// `evt/on` 申报里的一条事件订阅。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct EvtDeclaration {
-    pub name: String,
-    pub mode: EvtMode,
-}
-
-// ---------------------------------------------------------------------------
-// 同名仲裁(§三 规则 3)
-// ---------------------------------------------------------------------------
-
-/// 已装载插件的记账:同 id 同 entry 重载幂等;同 id 异 entry 拒绝后者并
-/// 指名已有者。宿主侧行为的 Rust 侧镜像,桥据此仲裁 `plugin/load`。
-#[derive(Debug, Default)]
-pub struct PluginLedger {
-    entries: HashMap<String, String>,
-}
-
-impl PluginLedger {
-    /// 申报一次装载。`(id, entry)` 与已有相同 → 幂等通过;`id` 已被别的
-    /// entry 占用 → [`ProtoError::DuplicatePlugin`] 指名已有者。
-    pub fn load(&mut self, plugin_id: &str, entry: &str) -> Result<(), ProtoError> {
-        match self.entries.get(plugin_id) {
-            Some(existing) if existing == entry => Ok(()),
-            Some(existing) => Err(ProtoError::DuplicatePlugin {
-                plugin_id: plugin_id.to_owned(),
-                existing_entry: existing.clone(),
-                attempted_entry: entry.to_owned(),
-            }),
-            None => {
-                self.entries.insert(plugin_id.to_owned(), entry.to_owned());
-                Ok(())
-            }
-        }
-    }
-
-    pub fn unload(&mut self, plugin_id: &str) -> bool {
-        self.entries.remove(plugin_id).is_some()
-    }
-
-    pub fn entry(&self, plugin_id: &str) -> Option<&str> {
-        self.entries.get(plugin_id).map(String::as_str)
-    }
-
-    pub fn len(&self) -> usize {
-        self.entries.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
     }
 }
 
@@ -327,7 +230,7 @@ pub struct HostGoneRecord {
 #[derive(Debug, Clone)]
 pub enum SessionState {
     Connecting,
-    Ready(PeerCaps),
+    Ready(Value),
     Failed(String),
     Disconnected(HostGoneRecord),
 }
@@ -373,10 +276,12 @@ pub struct InboundHooks {
     pub on_notify: Option<NotifyHook>,
 }
 
-/// 在飞调用的结算信号:`Res` 是对端应答,`HostGone` 是宿主死亡排空。
+/// 在飞调用的结算信号:`Res` 是对端应答,`HostGone` 是宿主死亡排空,
+/// `Cancelled` 是调用方取消。
 enum CallSettled {
     Res(Result<Value, RemoteError>),
     HostGone,
+    Cancelled,
 }
 
 struct Pending {
@@ -391,7 +296,7 @@ struct Shared {
     config: BridgeConfig,
     hooks: InboundHooks,
     expected: ExpectedHost,
-    own_caps: PeerCaps,
+    own_caps: Value,
     state: watch::Sender<SessionState>,
     stats: BridgeStatsInternals,
 }
@@ -416,13 +321,14 @@ pub struct Bridge {
 
 impl Bridge {
     /// 启动会话与后台泵。宿主侧随后应发 `hello`;用 [`Bridge::ready`] 等
-    /// 握手结果。
+    /// 握手结果。`own_caps` 是逐级回对称能力集的基座级回包载荷(dsh 级
+    /// 回包由 `rutis-dsh` 在后续波次叠加)。
     pub fn start(
         wire: Box<dyn Wire>,
         config: BridgeConfig,
         hooks: InboundHooks,
         expected: ExpectedHost,
-        own_caps: PeerCaps,
+        own_caps: Value,
     ) -> Bridge {
         let (state_tx, state_rx) = watch::channel(SessionState::Connecting);
         let shared = Arc::new(Shared {
@@ -440,11 +346,25 @@ impl Bridge {
         Bridge { shared, state_rx }
     }
 
-    /// 等握手完成;失败/断连先到则报错。
-    pub async fn ready(&mut self) -> Result<PeerCaps, ProtoError> {
+    fn check_open(&self) -> Result<(), ProtoError> {
+        match &*self.state_rx.borrow() {
+            SessionState::Ready(_) => Ok(()),
+            SessionState::Connecting => {
+                Err(ProtoError::NotReady("handshake not completed".into()))
+            }
+            SessionState::Failed(reason) => {
+                Err(ProtoError::NotReady(format!("handshake failed: {reason}")))
+            }
+            SessionState::Disconnected(_) => Err(ProtoError::HostGone),
+        }
+    }
+
+    /// 等握手完成;失败/断连先到则报错。返回宿主 hello 的原始参数
+    /// (能力集的逐层解析留给词汇层/上层 crate)。
+    pub async fn ready(&mut self) -> Result<Value, ProtoError> {
         loop {
             match &*self.state_rx.borrow() {
-                SessionState::Ready(caps) => return Ok(caps.clone()),
+                SessionState::Ready(hello) => return Ok(hello.clone()),
                 SessionState::Failed(reason) => {
                     return Err(ProtoError::Handshake(reason.clone()))
                 }
@@ -494,16 +414,7 @@ impl Bridge {
         params: Value,
         timeout_ms: Option<u64>,
     ) -> Result<Value, ProtoError> {
-        match &*self.state_rx.borrow() {
-            SessionState::Ready(_) => {}
-            SessionState::Connecting => {
-                return Err(ProtoError::NotReady("handshake not completed".into()))
-            }
-            SessionState::Failed(reason) => {
-                return Err(ProtoError::NotReady(format!("handshake failed: {reason}")))
-            }
-            SessionState::Disconnected(_) => return Err(ProtoError::HostGone),
-        }
+        self.check_open()?;
         let method = method.into();
         let timeout_ms = match timeout_ms {
             Some(t) if t > self.shared.config.max_timeout_ms => {
@@ -517,15 +428,22 @@ impl Bridge {
         let id = self.shared.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
         self.shared.pending.lock().unwrap().insert(id, Pending { method: method.clone(), tx });
-        let frame = Frame::Req { id, method: method.clone(), params, scope_id: None };
+        let frame = Frame::Req {
+            id,
+            method: method.clone(),
+            params,
+            scope_id: None,
+            session_id: None,
+            turn_id: None,
+        };
         if let Err(e) = self.shared.send_frame(frame).await {
             self.shared.pending.lock().unwrap().remove(&id);
             return Err(e)
         }
         match tokio::time::timeout(Duration::from_millis(timeout_ms), rx).await {
-            Ok(Ok(CallSettled::Res(outcome))) => {
-                outcome.map_err(|RemoteError { code, message }| ProtoError::Remote { code, message })
-            }
+            Ok(Ok(CallSettled::Res(outcome))) => outcome
+                .map_err(|RemoteError { code, message }| ProtoError::Remote { code, message }),
+            Ok(Ok(CallSettled::Cancelled)) => Err(ProtoError::Cancelled { id, method }),
             Ok(Ok(CallSettled::HostGone)) | Ok(Err(_)) => Err(ProtoError::HostGone),
             Err(_elapsed) => {
                 // 超时本地移除在飞,迟到 res 因此必落孤儿计数(§三 规则 4:
@@ -537,26 +455,28 @@ impl Bridge {
         }
     }
 
-    /// 发一条通知(无应答)。
+    /// 发一条通知(无应答)。终态后拒绝(F4:不向已判死的会话泄漏帧)。
     pub async fn notify(&self, method: &str, params: Value) -> Result<(), ProtoError> {
+        self.check_open()?;
         self.shared
-            .send_frame(Frame::Ntf { method: method.to_owned(), params, scope_id: None })
+            .send_frame(Frame::Ntf {
+                method: method.to_owned(),
+                params,
+                scope_id: None,
+                session_id: None,
+                turn_id: None,
+            })
             .await
     }
 
     /// 取消传播(§三 规则 4):发 `cancel` 通知并立即放弃对应在飞调用;
-    /// 迟到的 res 按孤儿丢弃计数。
+    /// 迟到的 res 按孤儿丢弃计数。取消以 `ProtoError::Cancelled` 结算
+    /// 调用方,与远端错误可区分(F2)。
     pub async fn cancel(&self, target: CancelTarget) -> Result<(), ProtoError> {
+        self.check_open()?;
         if target.prefix == CancelPrefix::Call {
             if let Some(pending) = self.shared.pending.lock().unwrap().remove(&target.id) {
-                if pending
-                    .tx
-                    .send(CallSettled::Res(Err(RemoteError {
-                        code: "cancelled".into(),
-                        message: "cancelled by caller".into(),
-                    })))
-                    .is_err()
-                {
+                if pending.tx.send(CallSettled::Cancelled).is_err() {
                     self.shared.stats.orphan_responses.fetch_add(1, Ordering::Relaxed);
                 }
             }
@@ -627,7 +547,9 @@ impl Shared {
     }
 
     /// 入站 Req 的服务:钩子在独立任务执行(泵不阻塞,重入面),完成后回 res。
-    /// 关联函数 + `Arc<Shared>`:`spawn` 要求 'static。
+    /// 关联函数 + `Arc<Shared>`:`spawn` 要求 'static。钩子 panic 由 spawn
+    /// 隔离不拖垮泵,但该请求永无应答——契约写死:钩子不得 panic,宿主侧
+    /// 以调用超时兜底(S1)。
     fn serve_request(shared: Arc<Shared>, id: u64, method: String, params: Value) {
         tokio::spawn(async move {
             let outcome = match shared.hooks.on_request.clone() {
@@ -638,8 +560,24 @@ impl Shared {
                 }),
             };
             let frame = match outcome {
-                Ok(result) => Frame::Res { id, ok: true, result: Some(result), error: None },
-                Err(error) => Frame::Res { id, ok: false, result: None, error: Some(error) },
+                Ok(result) => Frame::Res {
+                    id,
+                    ok: true,
+                    result: Some(result),
+                    error: None,
+                    scope_id: None,
+                    session_id: None,
+                    turn_id: None,
+                },
+                Err(error) => Frame::Res {
+                    id,
+                    ok: false,
+                    result: None,
+                    error: Some(error),
+                    scope_id: None,
+                    session_id: None,
+                    turn_id: None,
+                },
             };
             if shared.wire.send(frame).await.is_ok() {
                 shared.stats.frames_sent.fetch_add(1, Ordering::Relaxed);
@@ -655,23 +593,17 @@ impl Shared {
         }
     }
 
-    /// hello 的握手校验与回包(§三 规则 1)。失败在握手期报错并断开。
+    /// hello 的握手校验与回包(§三 规则 1)。基座级校验 + 可选扩展校验
+    /// (`ExpectedHost::verify`,两级握手的上层挂点)。失败在握手期报错
+    /// 并断开。
     async fn handle_hello(&self, id: u64, params: Value) -> Result<(), String> {
-        let caps: HelloCaps = serde_json::from_value(params)
+        let caps: HelloCaps = serde_json::from_value(params.clone())
             .map_err(|e| format!("hello params malformed: {e}"))?;
         if caps.protocol != self.expected.protocol {
             return Err(format!(
                 "protocol version mismatch: host declared {}, bridge expects {}",
                 caps.protocol, self.expected.protocol
             ))
-        }
-        if let Some(expected) = &self.expected.dsh_semver {
-            if &caps.dsh_semver != expected {
-                return Err(format!(
-                    "dshSemver mismatch: host declared {}, bridge pins {expected}",
-                    caps.dsh_semver
-                ))
-            }
         }
         if let Some(expected) = &self.expected.base {
             if &caps.base != expected {
@@ -681,19 +613,34 @@ impl Shared {
                 ))
             }
         }
-        let reply = serde_json::json!({
+        if let Some(verify) = &self.expected.verify {
+            verify(&params).map_err(|e| format!("extension validation failed: {e}"))?;
+        }
+        // 回包回显 protocol 供宿主对称验证(D2);dsh 级回包含待 rutis-dsh
+        // 叠加(设计 v3.2 §三 规则 1"逐级回对称")。
+        let mut reply = serde_json::json!({
+            "protocol": self.expected.protocol,
             "base": "rutis",
             "baseSemver": env!("CARGO_PKG_VERSION"),
-            "dshSemver": caps.dsh_semver,
             "stack": ["rutis"],
-            "caps": serde_json::to_value(&self.own_caps).expect("PeerCaps serializes"),
+            "caps": self.own_caps,
         });
-        let peer_caps = caps.caps.clone();
-        let frame = Frame::Res { id, ok: true, result: Some(reply), error: None };
+        if let Some(dsh_semver) = params.get("dsh").and_then(|d| d.get("dshSemver")).cloned() {
+            reply["dshSemver"] = dsh_semver;
+        }
+        let frame = Frame::Res {
+            id,
+            ok: true,
+            result: Some(reply),
+            error: None,
+            scope_id: None,
+            session_id: None,
+            turn_id: None,
+        };
         if self.send_frame(frame).await.is_err() {
             return Err("host closed during handshake".into())
         }
-        let _ = self.state.send(SessionState::Ready(peer_caps));
+        let _ = self.state.send(SessionState::Ready(params));
         Ok(())
     }
 }
@@ -705,57 +652,79 @@ async fn pump(shared: Arc<Shared>) {
             return
         };
         shared.stats.frames_received.fetch_add(1, Ordering::Relaxed);
-        match frame {
-            Frame::Res { id, ok, result, error } => {
-                let outcome = match (ok, result, error) {
-                    (true, Some(result), None) => Ok(result),
-                    (false, None, Some(RemoteError { code, message })) => {
-                        Err(RemoteError { code, message })
-                    }
-                    _ => {
-                        // 线格式违规:计孤儿(无法归属),继续泵。
-                        shared.stats.orphan_responses.fetch_add(1, Ordering::Relaxed);
-                        continue
-                    }
-                };
-                shared.complete(id, outcome);
-            }
-            Frame::Req { id, method, params, .. } => {
-                let connecting =
-                    matches!(&*shared.state.borrow(), SessionState::Connecting);
-                if connecting {
-                    if method == "hello" {
-                        if let Err(reason) = shared.handle_hello(id, params).await {
-                            let frame = Frame::Res {
-                                id,
-                                ok: false,
-                                result: None,
-                                error: Some(RemoteError {
-                                    code: "handshake".into(),
-                                    message: reason.clone(),
-                                }),
-                            };
-                            let _ = shared.send_frame(frame).await;
-                            let _ = shared.state.send(SessionState::Failed(reason));
-                            shared.host_gone(false);
-                            return
-                        }
-                    } else {
-                        // 握手前的任何其他帧都是协议违规。
-                        let reason = format!("first frame must be hello, got {method}");
+        // 首帧纪律(F1):握手前只有 hello(Req)合法,其余三类一律终态拒绝。
+        if matches!(&*shared.state.borrow(), SessionState::Connecting) {
+            match frame {
+                Frame::Req { id, method, params, .. } if method == "hello" => {
+                    if let Err(reason) = shared.handle_hello(id, params).await {
                         let frame = Frame::Res {
                             id,
                             ok: false,
                             result: None,
-                            error: Some(RemoteError { code: "handshake".into(), message: reason.clone() }),
+                            error: Some(RemoteError {
+                                code: "handshake".into(),
+                                message: reason.clone(),
+                            }),
+                            scope_id: None,
+                            session_id: None,
+                            turn_id: None,
                         };
                         let _ = shared.send_frame(frame).await;
                         let _ = shared.state.send(SessionState::Failed(reason));
                         shared.host_gone(false);
                         return
                     }
-                    continue
                 }
+                other => {
+                    // 握手前的任何非 hello 帧都是协议违规(F1:三类全覆盖)。
+                    // Req 违规可回 error res(有关联 id);Res/Ntf 无可归属的
+                    // 请求方,直接终态断开。
+                    let reason = match &other {
+                        Frame::Req { method, .. } => {
+                            format!("first frame must be hello, got req {method}")
+                        }
+                        Frame::Res { id, .. } => {
+                            format!("first frame must be hello, got res id {id}")
+                        }
+                        Frame::Ntf { method, .. } => {
+                            format!("first frame must be hello, got ntf {method}")
+                        }
+                    };
+                    if let Frame::Req { id, .. } = other {
+                        let error_frame = Frame::Res {
+                            id,
+                            ok: false,
+                            result: None,
+                            error: Some(RemoteError {
+                                code: "handshake".into(),
+                                message: reason.clone(),
+                            }),
+                            scope_id: None,
+                            session_id: None,
+                            turn_id: None,
+                        };
+                        let _ = shared.send_frame(error_frame).await;
+                    }
+                    let _ = shared.state.send(SessionState::Failed(reason));
+                    shared.host_gone(false);
+                    return
+                }
+            }
+            continue
+        }
+        match frame {
+            Frame::Res { id, .. } => {
+                // 结算判定统一走 Frame::outcome(S3:单一实现)。Res 帧的
+                // outcome() 恒为 Some;Err 分支 = 线格式违规,计孤儿继续泵。
+                match frame.outcome().expect("res frame has outcome") {
+                    Ok(Outcome::Ok(result)) => shared.complete(id, Ok(result)),
+                    Ok(Outcome::Err(error)) => shared.complete(id, Err(error)),
+                    Err(_malformed) => {
+                        shared.stats.orphan_responses.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+            }
+            Frame::Req { id, method, params, .. } => {
                 Shared::serve_request(Arc::clone(&shared), id, method, params);
             }
             Frame::Ntf { method, params, .. } => {
