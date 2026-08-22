@@ -10,6 +10,6 @@ repository = "https://github.com/eric8810/rutis"
 rust-version = "1.85"
 
 [workspace.dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "time", "net", "process", "io-util"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 thiserror = "2"

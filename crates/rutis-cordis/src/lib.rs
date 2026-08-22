@@ -12,6 +12,7 @@
 
 pub mod proto;
 pub mod rpc;
+pub mod tcp;
 
 pub use proto::{
     EvtDeclaration, EvtMode, ExpectedHost, HelloCaps, HelloVerify, PeerCaps, PluginLedger,
@@ -21,3 +22,4 @@ pub use rpc::{
     Bridge, BridgeConfig, BridgeStats, CancelPrefix, CancelTarget, Frame, HostGoneRecord,
     InboundHooks, MemoryWire, Outcome, ProtoError, RemoteError, SessionState, Wire,
 };
+pub use tcp::TcpWire;
