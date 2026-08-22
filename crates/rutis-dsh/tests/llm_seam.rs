@@ -2,7 +2,7 @@
 //! 断言 `llm/chunk` ntf 按 dispatchId 关联、发射序 = 到达序、res 携带
 //! finish。TS 侧映射(dsh StreamChunk)的端到端在 dsh 仓 vitest 宿主验收。
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use aimux_core::error::AiMuxError;
 use aimux_core::language_model::LanguageModel;
@@ -84,7 +84,7 @@ impl TsShapedHost {
 #[tokio::test]
 async fn llm_stream_chunks_flow_as_ntf_in_order_with_finish_in_res() {
     let (bridge_wire, host_wire) = MemoryWire::pair(64);
-    let seam = LlmSeam::new(Arc::new(ChunkedLlm));
+    let seam = LlmSeam::new(Arc::new(ChunkedLlm), "scripted", "chunked");
     let mut bridge = Bridge::start(
         Box::new(bridge_wire),
         BridgeConfig::default(),
@@ -139,4 +139,95 @@ async fn llm_stream_chunks_flow_as_ntf_in_order_with_finish_in_res() {
     }
     assert_eq!(kinds, vec!["StreamStart", "TextDelta", "TextDelta", "TextDelta", "Finish"]);
     assert_eq!(texts, "hello m2");
+}
+
+/// keyed 路由:dsh 侧 key 随请求过线 → 工厂按 (key, 过线 model) 构造,
+/// fallback 不被触碰;无 key 的调用仍走 fallback。工厂注入版,不联网。
+#[tokio::test]
+async fn dsh_side_api_key_routes_through_the_injected_factory() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    struct NeverModel;
+    #[async_trait]
+    impl LanguageModel for NeverModel {
+        fn provider(&self) -> &str { "never" }
+        fn model_id(&self) -> &str { "never" }
+        async fn do_generate(&self, _o: &CallOptions) -> Result<GenerateResult, AiMuxError> {
+            Err(AiMuxError::Other("fallback must not be used when a key crossed".into()))
+        }
+        async fn do_stream(&self, _o: &CallOptions) -> Result<StreamResult, AiMuxError> {
+            Err(AiMuxError::Other("fallback must not be used when a key crossed".into()))
+        }
+    }
+
+    let fallback_touched: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
+    let touched = Arc::clone(&fallback_touched);
+    let fallback: Arc<dyn LanguageModel> = Arc::new(FailLlm { touched: touched });
+    let seen: Arc<Mutex<Vec<(String, String)>>> = Arc::new(Mutex::new(Vec::new()));
+    let seen_factory = Arc::clone(&seen);
+    let factory: rutis_dsh::llm::ProviderFactory = Arc::new(move |key, model| {
+        seen_factory.lock().unwrap().push((key.to_owned(), model.to_owned()));
+        Ok(Arc::new(ChunkedLlm))
+    });
+
+    let (bridge_wire, host_wire) = MemoryWire::pair(64);
+    let seam = rutis_dsh::LlmSeam::with_factory(fallback, "deepseek", "env-model", factory);
+    let mut bridge = Bridge::start(
+        Box::new(bridge_wire),
+        BridgeConfig::default(),
+        seam.hooks(),
+        ExpectedHost::protocol(1),
+        json!({ "services": ["llm"], "wfKinds": [], "scopes": [] }),
+    );
+    seam.attach(bridge.clone());
+    let host = TsShapedHost { wire: host_wire };
+    host.hello().await;
+    bridge.ready().await.expect("handshake");
+
+    // 带 dsh 侧 key 与页面选择的 model:走工厂,过线 model 优先于 env 兜底。
+    host.wire
+        .send(Frame::Req {
+            id: 7,
+            method: "svc/call".into(),
+            params: json!({
+                "service": "llm", "method": "stream",
+                "params": {
+                    "options": { "provider": "aimux-bridge", "model": "deepseek-v4-flash", "messages": [] },
+                    "credentials": { "apiKey": "sk-from-web-page" },
+                },
+            }),
+            scope_id: None, session_id: None, turn_id: None,
+        })
+        .await
+        .expect("send");
+    // 收完 chunk 流到 res。
+    loop {
+        match host.next().await {
+            Frame::Ntf { .. } => continue,
+            Frame::Res { ok, .. } => { assert!(ok); break }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+    let calls = seen.lock().unwrap();
+    assert_eq!(calls.as_slice(), [("sk-from-web-page".to_string(), "deepseek-v4-flash".to_string())]);
+    assert!(!*fallback_touched.lock().unwrap(), "fallback must stay untouched");
+    drop(bridge);
+}
+
+struct FailLlm {
+    touched: Arc<Mutex<bool>>,
+}
+
+#[async_trait]
+impl LanguageModel for FailLlm {
+    fn provider(&self) -> &str { "fail" }
+    fn model_id(&self) -> &str { "fail" }
+    async fn do_generate(&self, _o: &CallOptions) -> Result<GenerateResult, AiMuxError> {
+        *self.touched.lock().unwrap() = true;
+        Err(AiMuxError::Other("fallback touched".into()))
+    }
+    async fn do_stream(&self, _o: &CallOptions) -> Result<StreamResult, AiMuxError> {
+        *self.touched.lock().unwrap() = true;
+        Err(AiMuxError::Other("fallback touched".into()))
+    }
 }

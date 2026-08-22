@@ -136,7 +136,7 @@ async fn full_turn_with_tool_call_and_backfeed_end_to_end() {
         .expect("host connects within 30s")
         .expect("accept");
     let llm = Arc::new(TwoTurnLlm { calls: Mutex::new(Vec::new()) });
-    let seam = LlmSeam::new(llm.clone());
+    let seam = LlmSeam::new(llm.clone(), "scripted", "two-turn");
     let mut bridge = Bridge::start(
         Box::new(TcpWire::from_stream(stream)),
         BridgeConfig::default(),

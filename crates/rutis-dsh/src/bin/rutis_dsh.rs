@@ -151,7 +151,7 @@ async fn up() {
         })
     }));
 
-    let seam = LlmSeam::new(model);
+    let seam = LlmSeam::new(model, provider_name.clone(), model_id.clone());
     let mut bridge = Bridge::start(
         Box::new(TcpWire::from_stream(stream)),
         BridgeConfig::default(),

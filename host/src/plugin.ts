@@ -4,10 +4,16 @@
  * 过线到 Rust(aimux);`forwardEvents` 声明的事件经 `evt/emit` 转发回流
  * (事件缝 v1:装载请求声明的事件集)。
  *
+ * 凭据对齐 dsh 产品体验:key 在 web Models 页/dsh 侧配置(credentials
+ * 体系,env → 托管文件层叠,per-request 解析)——每次调用解析后随请求
+ * 过线,Rust 侧用它构造 provider。shell 里 export key 只是 Rust 侧的
+ * 兜底,不再是主路径。
+ *
  * 由 runner 拉起的 dsh 经 `RUTIS_BRIDGE_PORT` env 找到 Rust 侧;
  * 端口未设即显式报错——桥插件只在 runner 语境里有意义。
  */
 import type { Context } from '@deepseek-ai/cordis'
+import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { BridgeAdapter, connectBridge } from './bridge.ts'
 
 export const name = 'rutis-bridge'
@@ -20,6 +26,13 @@ export interface Config {
   forwardEvents?: string[]
   /** 注册的 provider 路由名(默认 aimux-bridge)。 */
   route?: string
+  /** 凭据引用(与官方 llm-deepseek 的 apiKeyEnv 同一体系,默认
+   * DEEPSEEK_API_KEY——web Models 页写的 key 落在这里)。 */
+  credentialRef?: string
+}
+
+interface CredentialResolver {
+  resolve(ref: { readonly brand: unique symbol } | string): Promise<{ value: string } | undefined>
 }
 
 export function apply(ctx: Context, config: Config = {}): void {
@@ -41,8 +54,16 @@ export function apply(ctx: Context, config: Config = {}): void {
     })
   }
 
+  // 凭据:credentials 服务是可选组合(最小组合没有),软查询;per-request
+  // 解析,页面改 key 下一次调用即生效,与官方 adapter 同语义。
+  const credentials = (ctx as unknown as { get?: (name: string) => unknown }).get?.('credentials') as CredentialResolver | undefined
+  const ref = credentialRef(config.credentialRef ?? 'DEEPSEEK_API_KEY')
+  const resolveKey = credentials
+    ? async (): Promise<string | undefined> => (await credentials.resolve(ref))?.value
+    : undefined
+
   // llm 缝:桥 adapter 以 adapter 身份进入官方 LlmRuntime。
-  ctx.llm.registerAdapter([route], new BridgeAdapter(conn))
+  ctx.llm.registerAdapter([route], new BridgeAdapter(conn, { resolveKey }))
 }
 
 function safeJson(value: unknown): unknown {

@@ -180,11 +180,20 @@ class StreamCall {
 
 /** 桥 adapter(§四.1):stream 过线,chunk 流回流;注册面同步成员是注册期
  * 快照(F6 复核结论),继承 LlmAdapter 默认实现。 */
+/** 桥 adapter 的可选装配面。 */
+export interface BridgeAdapterOptions {
+  /** 每次调用解析凭据(dsh credentials 体系);返回值随请求过线,
+   * Rust 侧用它构造 provider。 */
+  resolveKey?: () => Promise<string | undefined>
+}
+
+/** 桥 adapter(§四.1):stream 过线,chunk 流回流;注册面同步成员是注册期
+ * 快照(F6 复核结论),继承 LlmAdapter 默认实现。 */
 export class BridgeAdapter extends LlmAdapter {
   private nextId = 100
   private readonly pending = new Map<number, StreamCall>()
 
-  constructor(conn: BridgeConnection) {
+  constructor(conn: BridgeConnection, options: BridgeAdapterOptions = {}) {
     super()
     conn.onFrame(frame => {
       if (frame.type === 'ntf' && frame.method === 'llm/chunk') {
@@ -196,10 +205,12 @@ export class BridgeAdapter extends LlmAdapter {
     })
     this.send = conn.send
     this.isDead = conn.dead
+    this.resolveKey = options.resolveKey
   }
 
   private readonly send: (frame: Frame) => void
   private readonly isDead: () => boolean
+  private readonly resolveKey: (() => Promise<string | undefined>) | undefined
 
   async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     if (this.isDead()) {
@@ -208,7 +219,19 @@ export class BridgeAdapter extends LlmAdapter {
     const id = this.nextId++
     const call = new StreamCall()
     this.pending.set(id, call)
-    this.send({ type: 'req', id, method: 'svc/call', params: { service: 'llm', method: 'stream', params: { options: JSON.parse(JSON.stringify(options ?? {})) } } })
+    // dsh 侧凭据(per-request 解析)随请求过线;解析失败不阻塞调用——
+    // Rust 侧还有 env 兜底。
+    const apiKey = await this.resolveKey?.().catch(() => undefined)
+    this.send({
+      type: 'req', id, method: 'svc/call',
+      params: {
+        service: 'llm', method: 'stream',
+        params: {
+          options: JSON.parse(JSON.stringify(options ?? {})),
+          ...(apiKey !== undefined ? { credentials: { apiKey } } : {}),
+        },
+      },
+    })
     try {
       yield* call.drain()
     } finally {

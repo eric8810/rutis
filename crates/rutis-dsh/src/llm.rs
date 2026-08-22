@@ -8,7 +8,7 @@
 //! 与 chunk/finish/usage 逐字段保真是 L3(M2-4)的验收范围,当前透传
 //! 最小面(scripted 模型不读 prompt)。
 
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use aimux_core::content::ContentPart;
 use aimux_core::language_model::LanguageModel;
@@ -88,16 +88,56 @@ fn text_message(role: Role, text: &str) -> LanguageModelPromptMessage {
     }
 }
 
+/// per-key provider 工厂:(api_key, model) → provider。默认实现走 aimux;
+/// 测试注入 fake 以断言 keyed 路由(不联网)。
+pub type ProviderFactory =
+    Arc<dyn Fn(&str, &str) -> Result<Arc<dyn LanguageModel>, String> + Send + Sync>;
+
 /// llm 缝本体:挂进桥的入站钩子,服务 `svc/call {service:"llm",
 /// method:"stream"}`。
+///
+/// 凭据双路:dsh 侧 per-request 解析的 key 随请求过线时(§web Models 页
+/// 配置的 key 即此路径),按 (key, model) 构造并缓存 provider;无 key 时
+/// 回落 `fallback`(runner 以 env 构造,或 UnconfiguredModel 占位)。模型
+/// 名以过线值为准(页面/组合里的选择),fallback 仅兜底。
 pub struct LlmSeam {
-    model: Arc<dyn LanguageModel>,
+    fallback: Arc<dyn LanguageModel>,
+    provider_name: String,
+    fallback_model: String,
+    factory: ProviderFactory,
+    keyed: Mutex<std::collections::HashMap<String, Arc<dyn LanguageModel>>>,
     bridge: OnceLock<Bridge>,
 }
 
 impl LlmSeam {
-    pub fn new(model: Arc<dyn LanguageModel>) -> Arc<LlmSeam> {
-        Arc::new(LlmSeam { model, bridge: OnceLock::new() })
+    pub fn new(
+        fallback: Arc<dyn LanguageModel>,
+        provider_name: impl Into<String>,
+        fallback_model: impl Into<String>,
+    ) -> Arc<LlmSeam> {
+        let provider_name = provider_name.into();
+        Self::with_factory(fallback, provider_name.clone(), fallback_model, Arc::new(move |key, model| {
+            aimux_providers::provider(&provider_name, Some(key.to_owned()), model, None)
+                .map(|m| Arc::from(m) as Arc<dyn LanguageModel>)
+                .map_err(|e| e.to_string())
+        }))
+    }
+
+    /// 工厂注入版(测试)。
+    pub fn with_factory(
+        fallback: Arc<dyn LanguageModel>,
+        provider_name: impl Into<String>,
+        fallback_model: impl Into<String>,
+        factory: ProviderFactory,
+    ) -> Arc<LlmSeam> {
+        Arc::new(LlmSeam {
+            fallback,
+            provider_name: provider_name.into(),
+            fallback_model: fallback_model.into(),
+            factory,
+            keyed: Mutex::new(std::collections::HashMap::new()),
+            bridge: OnceLock::new(),
+        })
     }
 
     /// `Bridge::start` 之后注入句柄——钩子需要它发 chunk ntf。
@@ -142,14 +182,47 @@ impl LlmSeam {
         // 请求侧入口日志(proxy 可观察性):每次过线调用一行入口 + 一行
         // 出口,stderr 不占 dsh 的 stdout 交互面。
         eprintln!(
-            "[rutis-dsh] llm/stream id={id} provider={} model={} msgs={} tools={} system={}",
+            "[rutis-dsh] llm/stream id={id} provider={} model={} msgs={} tools={} system={} key={}",
             generate.get("provider").and_then(Value::as_str).unwrap_or("-"),
             generate.get("model").and_then(Value::as_str).unwrap_or("-"),
             generate.get("messages").and_then(Value::as_array).map(Vec::len).unwrap_or(0),
             generate.get("tools").and_then(Value::as_array).map(Vec::len).unwrap_or(0),
             if generate.get("system").is_some() { "yes" } else { "no" },
+            if params.pointer("/params/credentials/apiKey").is_some() { "dsh" } else { "env" },
         );
-        let result = match self.model.do_stream(&options).await {
+        // 模型选择:过线值(页面/组合)优先,fallback 仅兜底;凭据:dsh 侧
+        // 解析的 key 随请求过线时按 (key, model) 构造并缓存 provider。
+        let wire_model = generate
+            .get("model")
+            .and_then(Value::as_str)
+            .filter(|m| !m.is_empty())
+            .unwrap_or(&self.fallback_model)
+            .to_owned();
+        let model: Arc<dyn LanguageModel> = match params
+            .pointer("/params/credentials/apiKey")
+            .and_then(Value::as_str)
+        {
+            Some(api_key) => {
+                let cache_key = format!("{api_key}\u{0}{wire_model}");
+                let mut keyed = self.keyed.lock().unwrap();
+                if let Some(model) = keyed.get(&cache_key) {
+                    Arc::clone(model)
+                } else {
+                    match (self.factory)(api_key, &wire_model) {
+                        Ok(model) => {
+                            keyed.insert(cache_key, Arc::clone(&model));
+                            model
+                        }
+                        Err(e) => {
+                            eprintln!("[rutis-dsh] llm/stream id={id} provider build failed: {e}");
+                            return Err(RemoteError { code: "llmProvider".into(), message: e })
+                        }
+                    }
+                }
+            }
+            None => Arc::clone(&self.fallback),
+        };
+        let result = match model.do_stream(&options).await {
             Ok(result) => result,
             Err(e) => {
                 eprintln!("[rutis-dsh] llm/stream id={id} failed: {e}");
