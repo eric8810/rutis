@@ -165,8 +165,23 @@ async fn up() {
         }
     }
 
-    // 收敛:dsh 退出即结束(桥断连由状态机收敛;Ctrl-C 归 dsh 的 stdio)。
-    let status = dsh.wait().await.expect("wait dsh");
-    eprintln!("[rutis-dsh] dsh exited: {status}");
-    drop(bridge);
+    // 收敛以**桥断连**为权威信号:Windows 上 cmd /c 包装层的退出时序不可
+    // 信(可能先于真实进程返回),把子进程退出当主信号会在 dsh 还活着时
+    // 提前收摊,反过来掐死通道并砸出宿主侧 ECONNRESET。两侧都等齐才退;
+    // 退出**不杀 dsh**——桥断了宿主继续跑(§十.4),模型调用由插件按
+    // bridgeDisconnected 拒绝。
+    let mut dsh_exited = false;
+    let mut bridge_closed = false;
+    while !(dsh_exited && bridge_closed) {
+        tokio::select! {
+            status = dsh.wait(), if !dsh_exited => {
+                eprintln!("[rutis-dsh] dsh exited: {}", status.expect("wait dsh"));
+                dsh_exited = true;
+            }
+            _ = bridge.wait_disconnect(), if !bridge_closed => {
+                eprintln!("[rutis-dsh] bridge channel closed");
+                bridge_closed = true;
+            }
+        }
+    }
 }

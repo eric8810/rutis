@@ -5,7 +5,7 @@
  * - `main.ts`(独立验收宿主,M2 e2e 用)
  */
 import net from 'node:net'
-import { CallId, LlmAdapter } from '@deepseek-ai/dsh-llm'
+import { CallId, LlmAdapter, LlmError } from '@deepseek-ai/dsh-llm'
 import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
 
 type Frame = Record<string, unknown>
@@ -18,6 +18,8 @@ export interface BridgeConnection {
   onNtf(handler: (method: string, params: Record<string, unknown>) => void): void
   /** hello 完成信号。 */
   helloDone: Promise<void>
+  /** 通道是否已断(断连后 dsh 必须继续活着——§十.4)。 */
+  dead(): boolean
   close(): void
 }
 
@@ -26,6 +28,18 @@ export function connectBridge(port: number): BridgeConnection {
   const frameHandlers: Array<(frame: Frame) => void> = []
   let resolveHello: () => void = () => {}
   const helloDone = new Promise<void>(resolve => { resolveHello = resolve })
+  let disconnected = false
+
+  // 通道断连绝不能变成进程崩溃(§十.4:桥侧死亡不拖垮 TS 栈)——
+  // 否则桥 socket 的 ECONNRESET 在 dsh 里是 unhandled error,整个宿主崩。
+  // 断连后:后续模型调用按 LlmError 拒绝,宿主其余功能照常。
+  const markDisconnected = (why: string) => {
+    if (disconnected) return
+    disconnected = true
+    console.error(`[rutis-bridge] bridge channel lost (${why}); model calls via the bridge will fail until restart`)
+  }
+  sock.on('error', (e: Error) => markDisconnected(e.message))
+  sock.on('close', () => markDisconnected('closed'))
 
   function send(frame: Frame) {
     sock.write(JSON.stringify(frame) + '\n')
@@ -73,6 +87,7 @@ export function connectBridge(port: number): BridgeConnection {
       })
     },
     helloDone,
+    dead: () => disconnected,
     close() { sock.destroy() },
   }
 }
@@ -132,7 +147,12 @@ class StreamCall {
   }
 
   settle(ok: boolean, payload: unknown) {
-    if (!ok) this.error = new Error(`bridge stream failed: ${JSON.stringify(payload)}`)
+    if (!ok) {
+      // dsh 官方约定:adapter 失败抛带 code 的 LlmError(webserver 的错误面
+      // 按此接住);普通 Error 会漏出为未分类故障。
+      const remote = payload as { code?: string; message?: string } | undefined
+      this.error = new LlmError(remote?.message ?? `bridge stream failed: ${JSON.stringify(payload)}`, remote?.code ?? 'bridgeError')
+    }
     this.closed = true
     this.wake?.()
   }
@@ -175,11 +195,16 @@ export class BridgeAdapter extends LlmAdapter {
       }
     })
     this.send = conn.send
+    this.isDead = conn.dead
   }
 
   private readonly send: (frame: Frame) => void
+  private readonly isDead: () => boolean
 
   async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+    if (this.isDead()) {
+      throw new LlmError('bridge channel is disconnected — restart with rutis-dsh up to restore model calls', 'bridgeDisconnected')
+    }
     const id = this.nextId++
     const call = new StreamCall()
     this.pending.set(id, call)
