@@ -1969,6 +1969,7 @@ name = "rutis-dsh"
 version = "0.1.0"
 dependencies = [
  "aimux-core",
+ "aimux-providers",
  "async-stream",
  "async-trait",
  "futures",

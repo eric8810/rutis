@@ -1,0 +1,17 @@
+# rutis-bridge bundle patch: insert the bridge plugin over the profile's
+# composed tree, and route the default model selection through it. Later
+# layers (the user's cordis.patch.yml) may override either row by id.
+- insert:
+    - id: rutis-bridge
+      name: 'rutis-bridge'
+      config:
+        route: aimux-bridge
+        forwardEvents:
+          - agent/turn-end
+
+# 模型调用走桥:provider 路由到 aimux-bridge;model 字段透传给 Rust 侧
+# (真实 provider/model 由 runner 的 AIMUX_PROVIDER/AIMUX_MODEL 决定)。
+- id: agent-default-model
+  config:
+    provider: aimux-bridge
+    model: aimux

@@ -1,6 +1,6 @@
 [package]
 name = "rutis-dsh"
-description = "dsh bridge face (Rust side): dsh node validation, llm seam, event mapping"
+description = "dsh bridge face (Rust side): dsh node validation, llm seam, event mapping, runner binary"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,13 +11,14 @@ rust-version.workspace = true
 rutis = { path = "../rutis" }
 rutis-cordis = { path = "../rutis-cordis" }
 aimux-core = "0.3.0"
+aimux-providers = "0.3.0"
 futures = "0.3"
 async-stream = "0.3.6"
 async-trait = "0.1.92"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# aimux-providers(真实 provider)在 M2-4 的真实后端验收进入;scripted 模型
-# 走 aimux-core 即可。
-
-[dev-dependencies]
 tokio = { workspace = true }
+
+[[bin]]
+name = "rutis-dsh"
+path = "src/bin/rutis_dsh.rs"
