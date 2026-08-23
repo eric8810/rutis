@@ -3,9 +3,27 @@
 # adapter (llm-pi-ai's role): routes live in the `llm-aimux:` settings
 # section's providers dict, configured and selected on the web Models page —
 # no default-model override here, the page owns the selection.
+# forwardEvents 策展纪律:**只收纯 emit 面**。dispatch 语义的事件绝不被动
+# 订阅——cordis waterfall 是 next() 链,不调 next() 的监听者会否决整条链
+# (含内置行为):订阅 agent/request(waterfall)曾让 turn 在 step 1 崩于
+# `proposedConfig.provider` TypeError(实测复现)。保留集 = dist 中证实为
+# plain emit 的 agent/*(dsh-agent-loop .emit + emitAgentEvent)+ session/
+# event(contained emit,实测 13 条回流);session/title、llm/retry 发布
+# 形态未证实,暂不收;agent/turn-end 为本地检出形态保留(版本漂移 §十.3,
+# npm rc.2 无此事件,订阅无害)。
 - insert:
     - id: rutis-bridge
       name: 'rutis-bridge'
       config:
         forwardEvents:
+          - session/event
+          - agent/created
+          - agent/disposed
+          - agent/error
+          - agent/status
+          - agent/session-start
+          - agent/inbox/inserted
+          - agent/inbox/claimed
+          - agent/inbox/discarded
+          - agent/inbox/spliced
           - agent/turn-end

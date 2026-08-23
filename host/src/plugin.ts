@@ -67,11 +67,51 @@ export function apply(ctx: Context, pluginConfig: PluginConfig = {}): void {
   const conn = connectBridge(port)
 
   // 事件缝:声明的事件 → evt/emit 过线(订阅先建,装载期事件也能过线)。
+  // 载荷替身表(L4):载荷里的活对象在过线前换纯数据替身——
+  // session/event 的 (session, event) 是精确替身(session 活对象 →
+  // { sessionId });agent/* 的载荷被注入活 agent 对象,整体序列化会
+  // 抛(其余字段跟着陪葬),走逐字段打捞:活对象降为 { liveRef, id }。
+  const payloadStandIns: Record<string, (args: unknown[]) => unknown> = {
+    'session/event': args => ({ sessionId: (args[0] as { id?: string } | undefined)?.id, event: args[1] }),
+  }
+  const fieldStandIn = (value: unknown): unknown => {
+    if (value !== null && typeof value === 'object') {
+      const id = (value as { id?: unknown }).id
+      if (typeof id === 'string' || typeof id === 'number') return { liveRef: true, id }
+    }
+    return { unserializable: true }
+  }
+  const salvageValue = (value: unknown): unknown => {
+    if (value instanceof Error) {
+      // Error 对象 stringify 成 {}(不抛,静默丢内容),特例提取
+      return { errorName: value.name, message: value.message }
+    }
+    try {
+      JSON.stringify(value ?? null)
+      return value ?? null
+    } catch {
+      return fieldStandIn(value)
+    }
+  }
+  const salvageFields = (payload: unknown): unknown => {
+    if (Array.isArray(payload)) return payload.map(salvageValue)
+    if (payload === null || typeof payload !== 'object') return payload
+    const out: Record<string, unknown> = {}
+    for (const [key, value] of Object.entries(payload)) {
+      out[key] = salvageValue(value)
+    }
+    return out
+  }
   const on = ctx.on as unknown as (name: string, listener: (...args: unknown[]) => void) => void
   for (const eventName of pluginConfig.forwardEvents ?? []) {
     on(eventName, (...args: unknown[]) => {
-      const payload = args.length <= 1 ? args[0] : args
-      conn.send({ type: 'ntf', method: 'evt/emit', params: { event: eventName, params: safeJson(payload) } })
+      const standIn = payloadStandIns[eventName]
+      const payload = standIn !== undefined ? standIn(args) : args.length <= 1 ? args[0] : args
+      let encoded = safeJson(payload)
+      if ((encoded as { unserializable?: boolean } | null)?.unserializable === true) {
+        encoded = safeJson(salvageFields(payload))
+      }
+      conn.send({ type: 'ntf', method: 'evt/emit', params: { event: eventName, params: encoded } })
     })
   }
 

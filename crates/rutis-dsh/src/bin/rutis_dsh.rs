@@ -16,7 +16,7 @@ use std::time::Duration;
 use aimux_core::language_model::LanguageModel;
 use aimux_core::options::CallOptions;
 use aimux_core::result::{GenerateResult, StreamResult};
-use rutis_cordis::{Bridge, BridgeConfig, ExpectedHost, InboundHooks, TcpWire};
+use rutis_cordis::{Bridge, BridgeConfig, ExpectedHost, TcpWire};
 use rutis_dsh::LlmSeam;
 use serde_json::json;
 
@@ -44,6 +44,18 @@ async fn main() {
 /// 极简空白分割(引用段不支持;路径含空格时 RUTIS_DSH_BIN 需自身可执行)。
 fn shell_split(s: &str) -> Vec<String> {
     s.split_whitespace().map(str::to_owned).collect()
+}
+
+/// 按 char 边界截断(日志摘要用;`floor_char_boundary` 尚未稳定)。
+fn truncate_chars(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        return s.to_owned()
+    }
+    let mut end = max;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &s[..end])
 }
 
 /// 未配置的模型占位:构造失败(如缺 key)不阻止宿主启动——web 界面、
@@ -112,7 +124,7 @@ async fn up() {
             // Windows:npm 全局命令是 .cmd shim(CreateProcess 只认 .exe),
             // 经 cmd /c 解析 PATH 里的 shim。RUTIS_DSH_BIN 显式多段
             // (node bin.js)不经此层。
-            let mut via_cmd = tokio::process::Command::new("cmd");
+            let via_cmd = tokio::process::Command::new("cmd");
             #[cfg(windows)]
             {
                 via_cmd.arg("/c").args(&dsh_command);
@@ -142,20 +154,27 @@ async fn up() {
         .expect("accept");
 
     // 事件观察:evt/emit 回流打 stderr(stdout 属于 dsh 的交互面)。
-    let mut hooks = InboundHooks::default();
+    // 与 llm 缝的 on_request 合并成一个 InboundHooks——此前把 seam.hooks()
+    // 整个传入,这里的 on_notify 被丢弃,事件观察从未生效过。
+    let seam = LlmSeam::new(model, provider_name.clone(), model_id.clone());
+    let mut hooks = seam.hooks();
     hooks.on_notify = Some(Arc::new(|method, params| {
         Box::pin(async move {
             if method == "evt/emit" {
-                eprintln!("[rutis-dsh] evt {}", params["event"]);
+                // 载荷摘要(截断):agent/* 的载荷是纯数据(插件侧已过替身
+                // 表),日志可见性到"形状级"即可——L4/M7 保真断言在测试里
+                // 做,不靠这个日志。
+                let summary = serde_json::to_string(&params["params"])
+                    .unwrap_or_else(|_| "?".into());
+                let summary = truncate_chars(&summary, 160);
+                eprintln!("[rutis-dsh] evt {} {}", params["event"], summary);
             }
         })
     }));
-
-    let seam = LlmSeam::new(model, provider_name.clone(), model_id.clone());
     let mut bridge = Bridge::start(
         Box::new(TcpWire::from_stream(stream)),
         BridgeConfig::default(),
-        seam.hooks(),
+        hooks,
         ExpectedHost::protocol(1),
         json!({ "services": ["llm"], "wfKinds": [], "scopes": [] }),
     );
