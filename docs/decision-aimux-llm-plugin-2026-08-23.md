@@ -7,6 +7,12 @@
 > v2 变更:用户裁决"桥必须业务无关、自动衔接"。映射(GenerateOptions→
 > CallOptions)从 Rust 侧移入 TS face,Rust 侧零 dsh 知识;rutis-dsh
 > 作为"dsh 词汇层"取消,仅剩启动器(去留见 §七.1)。
+>
+> **实施状态(2026-08-23,`7399433`):对象 A–E 全部落地并验收。**
+> §六 三条验收全过(llm_e2e 两轮流/回喂/usage/噪声注入经新组合;
+> workspace 171 绿;真机 one-shot finish=stop、key=request、注册表
+> 推导能力集、干净退出)。§七.1 裁决为 A(入口保留)。实施中修正一处
+> 契约缺陷:DTO 凭据字段 camelCase(`apiKey`),首测暴露了蛇形漏过线。
 
 ## 一、背景与动机
 
