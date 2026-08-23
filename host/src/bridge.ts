@@ -20,26 +20,44 @@ export interface BridgeConnection {
   helloDone: Promise<void>
   /** 通道是否已断(断连后 dsh 必须继续活着——§十.4)。 */
   dead(): boolean
+  /** 断连一次性回调(adapter 在此把在飞调用按 bridgeDisconnected 落定)。 */
+  onDead(handler: () => void): void
+  /** 在飞请求期间把通道 pin 为 ref(one-shot 宿主可自然退出的关键):
+   * 桥通道默认 unref,不让它独自撑住宿主事件循环;流/rpc 在飞时
+   * hold,全部落定后 release——空闲的桥等价于不存在。 */
+  hold(): void
+  release(): void
   close(): void
 }
 
 export function connectBridge(port: number): BridgeConnection {
   const sock = net.connect(port, '127.0.0.1')
   const frameHandlers: Array<(frame: Frame) => void> = []
+  const deadHandlers: Array<() => void> = []
   let resolveHello: () => void = () => {}
   const helloDone = new Promise<void>(resolve => { resolveHello = resolve })
   let disconnected = false
 
   // 通道断连绝不能变成进程崩溃(§十.4:桥侧死亡不拖垮 TS 栈)——
   // 否则桥 socket 的 ECONNRESET 在 dsh 里是 unhandled error,整个宿主崩。
-  // 断连后:后续模型调用按 LlmError 拒绝,宿主其余功能照常。
+  // 断连后:在飞与后续模型调用按 LlmError 拒绝,宿主其余功能照常。
   const markDisconnected = (why: string) => {
     if (disconnected) return
     disconnected = true
+    pendingHolds = 0
+    try { sock.unref() } catch { /* 已销毁 */ }
     console.error(`[rutis-bridge] bridge channel lost (${why}); model calls via the bridge will fail until restart`)
+    for (const handler of deadHandlers) handler()
   }
   sock.on('error', (e: Error) => markDisconnected(e.message))
   sock.on('close', () => markDisconnected('closed'))
+
+  // 空闲 unref:连接与握手期间保持 ref(连接本身要完成);hello 应答后
+  // 若无在飞请求即 unref。此后 hold/release 按在飞数翻转。
+  let pendingHolds = 0
+  const hold = () => { if (++pendingHolds === 1) sock.ref() }
+  const release = () => { if (pendingHolds > 0 && --pendingHolds === 0) sock.unref() }
+  const idleAfterHello = () => { if (pendingHolds === 0) sock.unref() }
 
   function send(frame: Frame) {
     sock.write(JSON.stringify(frame) + '\n')
@@ -72,6 +90,7 @@ export function connectBridge(port: number): BridgeConnection {
       }
       if (frame.type === 'res' && frame.id === 1) {
         resolveHello()
+        idleAfterHello()
         continue
       }
       for (const handler of frameHandlers) handler(frame)
@@ -88,6 +107,9 @@ export function connectBridge(port: number): BridgeConnection {
     },
     helloDone,
     dead: () => disconnected,
+    onDead(handler) { deadHandlers.push(handler) },
+    hold,
+    release,
     close() { sock.destroy() },
   }
 }
@@ -232,12 +254,27 @@ export class BridgeAdapter extends LlmAdapter {
         this.pending.get(id)?.settle(frame.ok === true, frame.error ?? frame.result)
       }
     })
+    // §十.4:断连时在飞调用不能永远挂起——全部按 bridgeDisconnected 落定。
+    conn.onDead(() => {
+      for (const call of this.pending.values()) {
+        call.settle(false, { code: 'bridgeDisconnected', message: 'bridge channel lost during stream' })
+      }
+      this.pending.clear()
+      for (const waiter of this.rpcPending.values()) {
+        waiter.reject(new LlmError('bridge channel lost during rpc', 'bridgeDisconnected'))
+      }
+      this.rpcPending.clear()
+    })
     this.send = conn.send
     this.isDead = conn.dead
+    this.connHold = conn.hold
+    this.connRelease = conn.release
   }
 
   private readonly send: (frame: Frame) => void
   private readonly isDead: () => boolean
+  private readonly connHold: () => void
+  private readonly connRelease: () => void
 
   providerInfo(provider: string): { id: string; name: string } {
     return { id: provider, name: this.options.profiles().get(provider)?.displayName ?? provider }
@@ -251,10 +288,11 @@ export class BridgeAdapter extends LlmAdapter {
   /** 通用 req/res 过线(listModels 等非流方法)。 */
   private rpc<T>(method: string, params: Record<string, unknown>): Promise<T> {
     const id = this.nextId++
+    this.connHold()
     return new Promise<T>((resolve, reject) => {
       this.rpcPending.set(id, { resolve: resolve as (v: unknown) => void, reject })
       this.send({ type: 'req', id, method: 'svc/call', params: { service: 'llm', method, params } })
-    })
+    }).finally(() => this.connRelease()) as Promise<T>
   }
 
   /** 该路由的 key:profile 的 apiKeyEnv 解析;无 profile 用兜底。 */
@@ -282,6 +320,7 @@ export class BridgeAdapter extends LlmAdapter {
     const id = this.nextId++
     const call = new StreamCall()
     this.pending.set(id, call)
+    this.connHold()
     const apiKey = await this.keyFor(options.provider).catch(() => undefined)
     this.send({
       type: 'req', id, method: 'svc/call',
@@ -298,6 +337,7 @@ export class BridgeAdapter extends LlmAdapter {
       yield* call.drain()
     } finally {
       this.pending.delete(id)
+      this.connRelease()
     }
   }
 }
