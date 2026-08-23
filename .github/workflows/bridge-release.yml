@@ -94,6 +94,29 @@ jobs:
           npm ci
           npm run build
 
+      # 仓内 manifest 有意不携带 optionalDependencies(指向未发布平台包的
+      # 安装会被 404 毒化);发布 tarball 里必须有它们,pack 前按 tag 版本
+      # 注入。平台包在 publish job 里先于主包发布,版本一致。
+      - name: inject optionalDependencies (platform packages)
+        run: |
+          node -e '
+            const fs = require("fs")
+            const version = process.env.TAG.replace(/^rutis-bridge-v/, "")
+            const names = [
+              "rutis-bridge-darwin-arm64",
+              "rutis-bridge-darwin-x64",
+              "rutis-bridge-linux-x64-gnu",
+              "rutis-bridge-linux-x64-musl",
+              "rutis-bridge-win32-x64",
+            ]
+            const pkg = JSON.parse(fs.readFileSync("host/package.json", "utf8"))
+            pkg.optionalDependencies = Object.fromEntries(names.map(n => [n, version]))
+            fs.writeFileSync("host/package.json", JSON.stringify(pkg, null, 2) + "\n")
+            console.log("injected optionalDependencies @", version)
+          '
+        env:
+          TAG: ${{ github.ref_name }}
+
       - name: pack
         run: cd host && npm pack --pack-destination .
 
