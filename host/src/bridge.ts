@@ -10,6 +10,12 @@ import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
 
 type Frame = Record<string, unknown>
 
+/**
+ * 本 face 消费的远端服务名(单一事实源:hello 声明与 svc/call 调用
+ * 共用;对端的能力集由其注册表推导,这里声明的是本侧的消费面)。
+ */
+const LLM_SERVICE = 'llm'
+
 export interface BridgeConnection {
   send(frame: Frame): void
   /** 全帧订阅(adapter 的 res/llm-chunk 接线面)。 */
@@ -68,7 +74,7 @@ export function connectBridge(port: number): BridgeConnection {
       type: 'req', id: 1, method: 'hello',
       params: {
         protocol: 1, base: 'cordis', baseSemver: '4.0.1', stack: ['node'],
-        caps: { services: ['llm'], wfKinds: [], scopes: [] },
+        caps: { services: [LLM_SERVICE], wfKinds: [], scopes: [] },
       },
     })
   })
@@ -291,7 +297,7 @@ export class BridgeAdapter extends LlmAdapter {
     this.connHold()
     return new Promise<T>((resolve, reject) => {
       this.rpcPending.set(id, { resolve: resolve as (v: unknown) => void, reject })
-      this.send({ type: 'req', id, method: 'svc/call', params: { service: 'llm', method, params } })
+      this.send({ type: 'req', id, method: 'svc/call', params: { service: LLM_SERVICE, method, params } })
     }).finally(() => this.connRelease()) as Promise<T>
   }
 
@@ -348,7 +354,7 @@ export class BridgeAdapter extends LlmAdapter {
     this.send({
       type: 'req', id, method: 'svc/call',
       params: {
-        service: 'llm', method: 'stream',
+        service: LLM_SERVICE, method: 'stream',
         params: {
           provider: this.backendFor(options.provider),
           model: options.model,

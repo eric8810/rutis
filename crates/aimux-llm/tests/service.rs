@@ -96,7 +96,7 @@ async fn stream_yields_parts_in_order_with_finish_last() {
         factory,
     );
     let mut parts = svc
-        .stream(req(json!({ "provider": "deepseek", "model": "x", "api_key": "sk-1", "options": { "messages": [{ "role": "user", "text": "hi" }] } })))
+        .stream(req(json!({ "provider": "deepseek", "model": "x", "apiKey": "sk-1", "options": { "messages": [{ "role": "user", "text": "hi" }] } })))
         .await
         .expect("stream");
     let mut kinds = Vec::new();
@@ -126,7 +126,7 @@ async fn keyed_request_routes_through_factory_fallback_untouched() {
     });
     let svc = AimuxLlm::with_factory(fallback, "deepseek", "env-model", factory);
     let _ = svc
-        .stream(req(json!({ "provider": "deepseek", "model": "deepseek-v4-flash", "api_key": "sk-from-page", "options": {} })))
+        .stream(req(json!({ "provider": "deepseek", "model": "deepseek-v4-flash", "apiKey": "sk-from-page", "options": {} })))
         .await
         .expect("stream");
     let calls = seen.lock().unwrap();
@@ -161,7 +161,7 @@ async fn dto_maps_to_call_options_field_by_field() {
     );
     let _ = svc
         .stream(req(json!({
-            "provider": "deepseek", "model": "m", "api_key": "k",
+            "provider": "deepseek", "model": "m", "apiKey": "k",
             "options": {
                 "system": "be terse",
                 "messages": [

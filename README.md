@@ -15,8 +15,9 @@ Cordis 核心范式的 Rust 惯用实现(自 [min-cordis](https://github.com/eri
 | crate | 内容 |
 |---|---|
 | [`rutis`](crates/rutis) | 内核:Ctx / fiber / registry / event bus / effect(115 项契约与对拍测试) |
-| [`rutis-cordis`](crates/rutis-cordis) | cordis 基座桥:协议机制(`Wire` 传输接缝 / 在飞表 / 取消 / 超时 / 孤儿计数)+ cordis 词汇(hello 能力集 / evt mode / wf kind / 装载仲裁),零 dsh 知识(M1;设计 [docs/design-dsh-bridge-2026-08-21.md](docs/design-dsh-bridge-2026-08-21.md) v3.2) |
-| [`rutis-dsh`](crates/rutis-dsh) | dsh 桥的 dsh 面:hello 的 `dsh` 节校验 / dshSemver pin / dsh 服务集求差;llm 缝与事件映射按 M2 进入 |
+| [`rutis-cordis`](crates/rutis-cordis) | 业务无关兼容层:协议机制(`Wire` 传输接缝 / 在飞表 / 取消 / 超时 / 孤儿计数)+ cordis 词汇(hello 能力集 / evt mode / wf kind / 装载仲裁)+ 注册表驱动的通用服务分发(`svc/call` + 流式 `svc/part`),零 dsh 知识(决策 [docs/decision-aimux-llm-plugin-2026-08-23.md](docs/decision-aimux-llm-plugin-2026-08-23.md) v2) |
+| [`aimux-llm`](crates/aimux-llm) | 独立 llm 服务插件:rutis 插件形态(apply → 注册 `llm` 服务),aimux 原生 DTO/StreamPart 即中性协议 schema;工厂/keyed 缓存/listModels 缓存/回落全在此,零桥零 dsh 知识 |
+| [`rutis-dsh`](crates/rutis-dsh) | 入口与组合根:起 rutis 运行时、装载 aimux-llm、把注册表中的服务经业务无关桥供给宿主进程(`rutis-dsh up`);`LlmFace` 是纯形状胶水,零 dsh 知识 |
 | [`rutis-agent`](crates/rutis-agent) | 最小 agent 框架:aimux `LanguageModel` 服务 + `ToolsPlugin` + `AgentDriverPlugin`(流式 `followup` + waterfall 中间件 + `agent/*` 事件广播)+ 内存 session + ratatui TUI;minimal mode 内置 `bash` + `replace_text` 工具(设计见 [docs/design-minimal-mode-2026-08-18.md](docs/design-minimal-mode-2026-08-18.md)) |
 | [`rutis-cli`](crates/rutis-cli) | 命令行形态:最小 coding agent TUI(`cargo install rutis-cli` 或 [GitHub Releases](https://github.com/eric8810/rutis/releases) 下载) |
 

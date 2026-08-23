@@ -616,18 +616,16 @@ impl Shared {
         if let Some(verify) = &self.expected.verify {
             verify(&params).map_err(|e| format!("extension validation failed: {e}"))?;
         }
-        // 回包回显 protocol 供宿主对称验证(D2);dsh 级回包含待 rutis-dsh
-        // 叠加(设计 v3.2 §三 规则 1"逐级回对称")。
-        let mut reply = serde_json::json!({
+        // 回包回显 protocol 供宿主对称验证(D2)。宿主 hello 的扩展节
+        // (如 dsh 的 dshSemver)不属于基座词汇,不在此回显——本 crate
+        // 零宿主形态知识(决策 2026-08-23 v2;原 dshSemver 回显已删)。
+        let reply = serde_json::json!({
             "protocol": self.expected.protocol,
             "base": "rutis",
             "baseSemver": env!("CARGO_PKG_VERSION"),
             "stack": ["rutis"],
             "caps": self.own_caps,
         });
-        if let Some(dsh_semver) = params.get("dsh").and_then(|d| d.get("dshSemver")).cloned() {
-            reply["dshSemver"] = dsh_semver;
-        }
         let frame = Frame::Res {
             id,
             ok: true,

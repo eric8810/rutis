@@ -99,13 +99,26 @@ aimux-llm ──→ rutis     独立 llm 服务插件(aimux 原生形状即协�
 llm 从"桥的本体"降格为"第一个经业务无关桥供给 dsh 的 rutis 插件"——
 "dsh 可以使用 rutis 提供的 rust plugin"命题的首个实例。
 
-## 六、验收口径
+## 六、验收口径(2026-08-23 晚修订:按所有者要求,验收形态 = **profile web**)
 
-1. `cargo test --workspace` 全绿(host_cordis e2d 缺 DSH_ROOT/
-   MIN_CORDIS_ROOT 的设计内 fail-loud 除外)。
-2. `rutis-dsh up --profile headless` 行为不回退:握手、llm 过线
-   (provider=deepseek key=dsh)、finish=stop、进程收敛。
+1. `cargo test --workspace --no-fail-fast` 真实全绿(唯一例外:
+   `host_cordis` e2e 缺 `DSH_ROOT`/`MIN_CORDIS_ROOT` 的设计内 fail-loud)。
+2. **web 完整 turn**(验收主形态):`rutis-dsh up --profile web`,runner
+   环境**不设任何 key**;浏览器新会话(默认模型即 aimux-llm 路由)发
+   消息 → 真实回答渲染;runner 侧证据:`[aimux-llm] stream ...
+   key=request ... finish=stop`(key 经 dsh 凭据存储 per-request 过线)、
+   dsh session 流记录 `provider: aimux-llm`、事件回流、picker 的
+   listModels 过线。
+   headless one-shot 作为回归副线保留(可脚本化),**不作为验收主形态**。
 3. 无新增实验/验证轮次。
+
+### 独立审核(2026-08-23,按所有者要求以需求原文独立审计)
+
+结论:1/2/4/5/6/7 满足,3 实质满足(两处残留已清:rpc.rs 的 dshSemver
+回显、TS hello caps 硬编码),8 的验收缺口已按上文本节补齐。审核另
+发现:serde 改名 apiKey 后 aimux-llm 三个测试红灯未重跑即提交——已修,
+并立规:**改名/契约变更后必须重跑全量测试再提交,提交信息里的绿必须
+是刚跑出来的**。
 
 ## 七、待确认(仅剩一项)
 
