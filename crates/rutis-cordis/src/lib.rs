@@ -12,6 +12,7 @@
 
 pub mod proto;
 pub mod rpc;
+pub mod services;
 pub mod tcp;
 
 pub use proto::{
@@ -22,4 +23,5 @@ pub use rpc::{
     Bridge, BridgeConfig, BridgeStats, CancelPrefix, CancelTarget, Frame, HostGoneRecord,
     InboundHooks, MemoryWire, Outcome, ProtoError, RemoteError, SessionState, Wire,
 };
+pub use services::{CordisService, ServiceDispatch, ServiceReply};
 pub use tcp::TcpWire;

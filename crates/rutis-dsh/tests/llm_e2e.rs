@@ -18,8 +18,7 @@ use aimux_core::result::{GenerateResult, StreamResult};
 use aimux_core::stream_part::StreamPart;
 use aimux_core::types::{FinishReason, FinishReasonUnified, TokenUsage, Usage};
 use async_trait::async_trait;
-use rutis_cordis::{Bridge, BridgeConfig, ExpectedHost, TcpWire};
-use rutis_dsh::LlmSeam;
+use rutis_cordis::{Bridge, BridgeConfig, ExpectedHost, ServiceDispatch, TcpWire};
 use serde_json::json;
 
 /// 两轮 scripted:第一次(prompt 未含工具结果)产出 tool-call;第二次
@@ -136,15 +135,17 @@ async fn full_turn_with_tool_call_and_backfeed_end_to_end() {
         .expect("host connects within 30s")
         .expect("accept");
     let llm = Arc::new(TwoTurnLlm { calls: Mutex::new(Vec::new()) });
-    let seam = LlmSeam::new(llm.clone(), "scripted", "two-turn");
+    let service: Arc<dyn aimux_llm::LlmService> =
+        Arc::new(aimux_llm::AimuxLlm::new(llm.clone(), "scripted", "two-turn"));
+    let dispatch = ServiceDispatch::new(vec![rutis_dsh::LlmFace::new(service)]);
     let mut bridge = Bridge::start(
         Box::new(TcpWire::from_stream(stream)),
         BridgeConfig::default(),
-        seam.hooks(),
+        dispatch.hooks(),
         ExpectedHost::protocol(1),
-        json!({ "services": ["llm"], "wfKinds": [], "scopes": [] }),
+        json!({ "services": dispatch.names(), "wfKinds": [], "scopes": [] }),
     );
-    seam.attach(bridge.clone());
+    dispatch.attach(bridge.clone());
     bridge.ready().await.expect("handshake with vitest host");
 
     // TS 侧跑完整 turn(含 console.log 注入断言);vitest 退出码即结论。

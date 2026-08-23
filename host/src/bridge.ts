@@ -239,7 +239,7 @@ export class BridgeAdapter extends LlmAdapter {
   constructor(conn: BridgeConnection, private readonly options: BridgeAdapterOptions) {
     super()
     conn.onFrame(frame => {
-      if (frame.type === 'ntf' && frame.method === 'llm/chunk') {
+      if (frame.type === 'ntf' && frame.method === 'svc/part') {
         const params = frame.params as Record<string, unknown>
         this.pending.get(params.dispatchId as number)?.mapPart(params.part as Record<string, unknown>)
       } else if (frame.type === 'res') {
@@ -308,9 +308,30 @@ export class BridgeAdapter extends LlmAdapter {
     const apiKey = await this.keyFor(provider).catch(() => undefined)
     const result = await this.rpc<{ models: Array<{ id: string }> }>('listModels', {
       provider: this.backendFor(provider),
-      ...(apiKey !== undefined ? { credentials: { apiKey } } : {}),
+      ...(apiKey !== undefined ? { apiKey } : {}),
     })
     return (result.models ?? []).map(m => ({ provider, id: m.id, name: m.id }))
+  }
+
+  /** dsh `GenerateOptions` → aimux-llm 的中性 prompt 形状(本插件是
+   * 唯一懂 dsh 的地方:翻译只发生在这里,Rust 侧零 dsh 知识)。 */
+  private promptSpec(options: GenerateOptions): Record<string, unknown> {
+    const messages = (options.messages ?? []).map(message => ({
+      role: message.role,
+      text: (Array.isArray(message.content) ? message.content : [])
+        .map(block => (block !== null && typeof block === 'object' && 'text' in block && typeof (block as { text?: unknown }).text === 'string' ? (block as { text: string }).text : ''))
+        .join(''),
+    }))
+    const tools = (options.tools ?? []).map(tool => ({
+      name: tool.name,
+      ...(tool.description !== undefined ? { description: tool.description } : {}),
+      ...(tool.parameters !== undefined ? { parameters: tool.parameters } : {}),
+    }))
+    return {
+      ...(options.system !== undefined ? { system: options.system } : {}),
+      messages,
+      tools,
+    }
   }
 
   async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
@@ -322,14 +343,17 @@ export class BridgeAdapter extends LlmAdapter {
     this.pending.set(id, call)
     this.connHold()
     const apiKey = await this.keyFor(options.provider).catch(() => undefined)
+    // 过线 = aimux-llm 声明的中性 DTO(路由名已在 TS 侧解析为后端
+    // provider);dsh 形状不出本插件。
     this.send({
       type: 'req', id, method: 'svc/call',
       params: {
         service: 'llm', method: 'stream',
         params: {
-          // 过线的是后端 provider 名(路由名在 dsh 侧已消费完毕)。
-          options: { ...JSON.parse(JSON.stringify(options ?? {})), provider: this.backendFor(options.provider) },
-          ...(apiKey !== undefined ? { credentials: { apiKey } } : {}),
+          provider: this.backendFor(options.provider),
+          model: options.model,
+          ...(apiKey !== undefined ? { apiKey } : {}),
+          options: this.promptSpec(options),
         },
       },
     })

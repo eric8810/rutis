@@ -1,54 +1,17 @@
-//! llm 缝 M2-3 形状验证(内存 wire):scripted 模型产出确定 chunk 序列,
-//! 断言 `llm/chunk` ntf 按 dispatchId 关联、发射序 = 到达序、res 携带
-//! finish。TS 侧映射(dsh StreamChunk)的端到端在 dsh 仓 vitest 宿主验收。
+//! wire 层分发验证(内存 wire,业务无关桥 + llm face):
+//! - `svc/call stream` 的 part 流按 `svc/part` ntf 回传,dispatchId 关联,
+//!   发射序 = 到达序,res 以 parts 计数收尾;
+//! - 未注册服务 / 未知方法按 RemoteError 分类;
+//! - hello 能力集从注册表推导。
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use aimux_core::error::AiMuxError;
-use aimux_core::language_model::LanguageModel;
-use aimux_core::options::CallOptions;
-use aimux_core::result::{GenerateResult, StreamResult};
-use aimux_core::stream_part::StreamPart;
-use aimux_core::types::{FinishReason, FinishReasonUnified, Usage};
-use async_trait::async_trait;
-use rutis_cordis::{Bridge, BridgeConfig, ExpectedHost, Frame, MemoryWire, Wire};
-use rutis_dsh::LlmSeam;
-use serde_json::{json, Value};
-
-/// 逐字弹出 "hel" "lo " "m2" 的 scripted 模型(手写最小版,不依赖
-/// rutis-agent——兄弟 crate 不互相依赖)。
-struct ChunkedLlm;
-
-#[async_trait]
-impl LanguageModel for ChunkedLlm {
-    fn provider(&self) -> &str {
-        "scripted"
-    }
-
-    fn model_id(&self) -> &str {
-        "chunked"
-    }
-
-    async fn do_generate(&self, _options: &CallOptions) -> Result<GenerateResult, AiMuxError> {
-        Err(AiMuxError::Other("stream-only".into()))
-    }
-
-    async fn do_stream(&self, _options: &CallOptions) -> Result<StreamResult, AiMuxError> {
-        let deltas: Vec<&str> = vec!["hel", "lo ", "m2"];
-        let stream = async_stream::stream! {
-            yield Ok(StreamPart::StreamStart { warnings: Vec::new() });
-            for delta in deltas {
-                yield Ok(StreamPart::TextDelta { id: "text-0".to_string(), delta: delta.to_string(), provider_metadata: None });
-            }
-            yield Ok(StreamPart::Finish {
-                finish_reason: FinishReason { unified: FinishReasonUnified::Stop, raw: None },
-                usage: Usage::default(),
-                provider_metadata: None,
-            });
-        };
-        Ok(StreamResult { stream: Box::pin(stream), request_body: None, response_headers: None })
-    }
-}
+use aimux_llm::{AimuxLlm, LlmService};
+use rutis_cordis::{
+    Bridge, BridgeConfig, ExpectedHost, Frame, MemoryWire, ServiceDispatch, Wire,
+};
+use rutis_dsh::LlmFace;
+use serde_json::json;
 
 struct TsShapedHost {
     wire: MemoryWire,
@@ -81,29 +44,81 @@ impl TsShapedHost {
     }
 }
 
-#[tokio::test]
-async fn llm_stream_chunks_flow_as_ntf_in_order_with_finish_in_res() {
-    let (bridge_wire, host_wire) = MemoryWire::pair(64);
-    let seam = LlmSeam::new(Arc::new(ChunkedLlm), "scripted", "chunked");
+/// scripted 服务:逐字 "hel" "lo " "m2"(经 AimuxLlm 的回落路径)。
+fn chunked_service() -> Arc<dyn LlmService> {
+    Arc::new(AimuxLlm::new(Arc::new(ChunkedLlm), "scripted", "chunked"))
+}
+
+struct ChunkedLlm;
+
+#[async_trait::async_trait]
+impl aimux_core::language_model::LanguageModel for ChunkedLlm {
+    fn provider(&self) -> &str {
+        "scripted"
+    }
+
+    fn model_id(&self) -> &str {
+        "chunked"
+    }
+
+    async fn do_generate(
+        &self,
+        _o: &aimux_core::options::CallOptions,
+    ) -> Result<aimux_core::result::GenerateResult, aimux_core::error::AiMuxError> {
+        Err(aimux_core::error::AiMuxError::Other("stream-only".into()))
+    }
+
+    async fn do_stream(
+        &self,
+        _o: &aimux_core::options::CallOptions,
+    ) -> Result<aimux_core::result::StreamResult, aimux_core::error::AiMuxError> {
+        let stream = async_stream::stream! {
+            use aimux_core::stream_part::StreamPart;
+            use aimux_core::types::{FinishReason, FinishReasonUnified, Usage};
+            yield Ok(StreamPart::StreamStart { warnings: Vec::new() });
+            for delta in ["hel", "lo ", "m2"] {
+                yield Ok(StreamPart::TextDelta { id: "text-0".to_string(), delta: delta.to_string(), provider_metadata: None });
+            }
+            yield Ok(StreamPart::Finish {
+                finish_reason: FinishReason { unified: FinishReasonUnified::Stop, raw: None },
+                usage: Usage::default(),
+                provider_metadata: None,
+            });
+        };
+        Ok(aimux_core::result::StreamResult {
+            stream: Box::pin(stream),
+            request_body: None,
+            response_headers: None,
+        })
+    }
+}
+
+async fn start(dispatch: &Arc<ServiceDispatch>, wire: MemoryWire) -> Bridge {
     let mut bridge = Bridge::start(
-        Box::new(bridge_wire),
+        Box::new(wire),
         BridgeConfig::default(),
-        seam.hooks(),
+        dispatch.hooks(),
         ExpectedHost::protocol(1),
-        json!({ "services": ["llm"], "wfKinds": [], "scopes": [] }),
+        json!({ "services": dispatch.names(), "wfKinds": [], "scopes": [] }),
     );
-    seam.attach(bridge.clone());
+    dispatch.attach(bridge.clone());
+    bridge
+}
+
+#[tokio::test]
+async fn stream_parts_flow_as_svc_part_ntfs_in_order_with_res_tail() {
+    let (bridge_wire, host_wire) = MemoryWire::pair(64);
+    let dispatch = ServiceDispatch::new(vec![LlmFace::new(chunked_service())]);
+    let mut bridge = start(&dispatch, bridge_wire).await;
     let host = TsShapedHost { wire: host_wire };
     host.hello().await;
     bridge.ready().await.expect("handshake");
 
-    // TS 侧发起 stream 过线调用:svc/call 是宿主 → Rust 方向(TS adapter
-    // 调桥后的 aimux 服务),宿主发 Req,chunk 流与 res 都来自桥。
     host.wire
         .send(Frame::Req {
             id: 7,
             method: "svc/call".into(),
-            params: json!({ "service": "llm", "method": "stream", "params": { "options": { "provider": "aimux", "model": "scripted" } } }),
+            params: json!({ "service": "llm", "method": "stream", "params": { "provider": "scripted", "model": "chunked", "options": {} } }),
             scope_id: None,
             session_id: None,
             turn_id: None,
@@ -112,17 +127,15 @@ async fn llm_stream_chunks_flow_as_ntf_in_order_with_finish_in_res() {
         .expect("send svc/call");
     let dispatch_id = 7u64;
 
-    // chunk 流:StreamStart + 3×TextDelta + Finish,全部按 dispatchId 关联,
-    // 发射序 = 到达序;随后 res 携带 finish。
     let mut kinds = Vec::new();
     let mut texts = String::new();
     loop {
         match host.next().await {
             Frame::Ntf { method, params, .. } => {
-                assert_eq!(method, "llm/chunk");
-                assert_eq!(params["dispatchId"], dispatch_id, "chunk 关联调用 id");
+                assert_eq!(method, "svc/part", "通用 part ntf(不再有 llm/chunk)");
+                assert_eq!(params["dispatchId"], dispatch_id, "part 关联调用 id");
                 let part = &params["part"];
-                if let Some(delta) = part.get("TextDelta").and_then(|d| d.get("delta")).and_then(Value::as_str) {
+                if let Some(delta) = part.get("TextDelta").and_then(|d| d.get("delta")).and_then(|v| v.as_str()) {
                     texts.push_str(delta);
                 }
                 let kind = part.as_object().and_then(|m| m.keys().next()).cloned().unwrap_or_default();
@@ -131,7 +144,8 @@ async fn llm_stream_chunks_flow_as_ntf_in_order_with_finish_in_res() {
             Frame::Res { id, ok, result, .. } => {
                 assert_eq!(id, dispatch_id);
                 assert!(ok, "result: {result:?}");
-                assert!(result.expect("payload")["finish"].get("Finish").is_some());
+                let result = result.expect("res payload");
+                assert_eq!(result["parts"], 5, "StreamStart + 3×TextDelta + Finish");
                 break
             }
             other => panic!("unexpected frame: {other:?}"),
@@ -139,95 +153,61 @@ async fn llm_stream_chunks_flow_as_ntf_in_order_with_finish_in_res() {
     }
     assert_eq!(kinds, vec!["StreamStart", "TextDelta", "TextDelta", "TextDelta", "Finish"]);
     assert_eq!(texts, "hello m2");
+    drop(bridge);
 }
 
-/// keyed 路由:dsh 侧 key 随请求过线 → 工厂按 (key, 过线 model) 构造,
-/// fallback 不被触碰;无 key 的调用仍走 fallback。工厂注入版,不联网。
 #[tokio::test]
-async fn dsh_side_api_key_routes_through_the_injected_factory() {
-    use std::sync::atomic::{AtomicBool, Ordering};
-
-    struct NeverModel;
-    #[async_trait]
-    impl LanguageModel for NeverModel {
-        fn provider(&self) -> &str { "never" }
-        fn model_id(&self) -> &str { "never" }
-        async fn do_generate(&self, _o: &CallOptions) -> Result<GenerateResult, AiMuxError> {
-            Err(AiMuxError::Other("fallback must not be used when a key crossed".into()))
-        }
-        async fn do_stream(&self, _o: &CallOptions) -> Result<StreamResult, AiMuxError> {
-            Err(AiMuxError::Other("fallback must not be used when a key crossed".into()))
-        }
-    }
-
-    let fallback_touched: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
-    let touched = Arc::clone(&fallback_touched);
-    let fallback: Arc<dyn LanguageModel> = Arc::new(FailLlm { touched: touched });
-    let seen: Arc<Mutex<Vec<(String, String, String)>>> = Arc::new(Mutex::new(Vec::new()));
-    let seen_factory = Arc::clone(&seen);
-    let factory: rutis_dsh::llm::ProviderFactory = Arc::new(move |provider, key, model| {
-        seen_factory.lock().unwrap().push((provider.to_owned(), key.to_owned(), model.to_owned()));
-        Ok(Arc::new(ChunkedLlm))
-    });
-
+async fn unknown_service_and_method_are_classified_remote_errors() {
     let (bridge_wire, host_wire) = MemoryWire::pair(64);
-    let seam = rutis_dsh::LlmSeam::with_factory(fallback, "deepseek", "env-model", factory);
-    let mut bridge = Bridge::start(
-        Box::new(bridge_wire),
-        BridgeConfig::default(),
-        seam.hooks(),
-        ExpectedHost::protocol(1),
-        json!({ "services": ["llm"], "wfKinds": [], "scopes": [] }),
-    );
-    seam.attach(bridge.clone());
+    let dispatch = ServiceDispatch::new(vec![LlmFace::new(chunked_service())]);
+    let mut bridge = start(&dispatch, bridge_wire).await;
     let host = TsShapedHost { wire: host_wire };
     host.hello().await;
     bridge.ready().await.expect("handshake");
 
-    // 带 dsh 侧 key 与页面选择的 model:走工厂,过线 model 优先于 env 兜底。
-    host.wire
-        .send(Frame::Req {
-            id: 7,
-            method: "svc/call".into(),
-            params: json!({
-                "service": "llm", "method": "stream",
-                "params": {
-                    "options": { "provider": "deepseek", "model": "deepseek-v4-flash", "messages": [] },
-                    "credentials": { "apiKey": "sk-from-web-page" },
-                },
-            }),
-            scope_id: None, session_id: None, turn_id: None,
-        })
-        .await
-        .expect("send");
-    // 收完 chunk 流到 res。
-    loop {
+    for (params, code) in [
+        (json!({ "service": "nope", "method": "stream" }), "noService"),
+        (json!({ "service": "llm", "method": "generate" }), "unhandled"),
+    ] {
+        host.wire
+            .send(Frame::Req {
+                id: 9,
+                method: "svc/call".into(),
+                params,
+                scope_id: None,
+                session_id: None,
+                turn_id: None,
+            })
+            .await
+            .expect("send");
         match host.next().await {
-            Frame::Ntf { .. } => continue,
-            Frame::Res { ok, .. } => { assert!(ok); break }
-            other => panic!("unexpected: {other:?}"),
+            Frame::Res { ok, error, .. } => {
+                assert!(!ok);
+                assert_eq!(error.expect("res error").code, code);
+            }
+            other => panic!("unexpected frame: {other:?}"),
         }
     }
-    let calls = seen.lock().unwrap();
-    assert_eq!(calls.as_slice(), [("deepseek".to_string(), "sk-from-web-page".to_string(), "deepseek-v4-flash".to_string())]);
-    assert!(!*fallback_touched.lock().unwrap(), "fallback must stay untouched");
     drop(bridge);
 }
 
-struct FailLlm {
-    touched: Arc<Mutex<bool>>,
-}
-
-#[async_trait]
-impl LanguageModel for FailLlm {
-    fn provider(&self) -> &str { "fail" }
-    fn model_id(&self) -> &str { "fail" }
-    async fn do_generate(&self, _o: &CallOptions) -> Result<GenerateResult, AiMuxError> {
-        *self.touched.lock().unwrap() = true;
-        Err(AiMuxError::Other("fallback touched".into()))
+/// hello 能力集来自注册表:注册两个服务(第二个是假名服务)即声明两名。
+#[tokio::test]
+async fn hello_caps_derive_from_the_registry() {
+    struct Echo;
+    #[async_trait::async_trait]
+    impl rutis_cordis::CordisService for Echo {
+        fn name(&self) -> &str {
+            "echo"
+        }
+        async fn call(
+            &self,
+            method: &str,
+            _params: serde_json::Value,
+        ) -> Result<rutis_cordis::ServiceReply, rutis_cordis::RemoteError> {
+            Err(rutis_cordis::RemoteError { code: "unhandled".into(), message: format!("echo/{method}") })
+        }
     }
-    async fn do_stream(&self, _o: &CallOptions) -> Result<StreamResult, AiMuxError> {
-        *self.touched.lock().unwrap() = true;
-        Err(AiMuxError::Other("fallback touched".into()))
-    }
+    let dispatch = ServiceDispatch::new(vec![LlmFace::new(chunked_service()), Arc::new(Echo)]);
+    assert_eq!(dispatch.names(), vec!["echo".to_string(), "llm".to_string()]);
 }

@@ -30,6 +30,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "aimux-llm"
+version = "0.1.0"
+dependencies = [
+ "aimux-core",
+ "aimux-providers",
+ "async-stream",
+ "async-trait",
+ "futures",
+ "rutis",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "aimux-provider-utils"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1957,6 +1972,8 @@ dependencies = [
 name = "rutis-cordis"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
+ "futures",
  "rutis",
  "serde",
  "serde_json",
@@ -1969,7 +1986,7 @@ name = "rutis-dsh"
 version = "0.1.0"
 dependencies = [
  "aimux-core",
- "aimux-providers",
+ "aimux-llm",
  "async-stream",
  "async-trait",
  "futures",

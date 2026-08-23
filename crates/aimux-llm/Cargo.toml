@@ -1,6 +1,6 @@
 [package]
-name = "rutis-cordis"
-description = "Cordis base bridge (Rust side): transport, RPC mechanics, cordis protocol vocabulary"
+name = "aimux-llm"
+description = "llm service as an independent rutis plugin (aimux backend, host-agnostic)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,9 +9,11 @@ rust-version.workspace = true
 
 [dependencies]
 rutis = { path = "../rutis" }
+aimux-core = "0.3.0"
+aimux-providers = "0.3.0"
+async-stream = "0.3.6"
 async-trait = "0.1.92"
 futures = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { workspace = true }
-thiserror = { workspace = true }

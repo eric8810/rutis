@@ -1,29 +1,26 @@
-//! `rutis-dsh up`:一条命令跑起正式 dsh。
+//! `rutis-dsh up`:入口与组合根(决策文档 v2 对象 D)。
 //!
-//! 1. 起 TCP listener(桥的专用通道);
-//! 2. 构造真实 aimux provider(`AIMUX_PROVIDER`/`AIMUX_MODEL`,key 走
-//!    各 provider 的 env,如 `DEEPSEEK_API_KEY`);
+//! 1. 起 rutis 运行时,装载 aimux-llm 插件(apply → 注册 llm 服务);
+//! 2. 注册表中的服务经业务无关桥(rutis-cordis)供给宿主——hello 能力集
+//!    从注册表推导,不硬编码;
 //! 3. spawn 官方 dsh CLI(`RUTIS_DSH_BIN` 或 PATH 的 `dsh`),经
-//!    `RUTIS_BRIDGE_PORT` 告知桥端口——profile 里的 rutis-bridge 插件
-//!    以此连回;stdio 继承(dsh 自己的交互面归它);
-//! 4. 握手后挂 LlmSeam(模型调用过线 → aimux)+ 事件观察日志
-//!    (`evt/emit` → stderr);
-//! 5. dsh 退出或桥断连即收敛。
+//!    `RUTIS_BRIDGE_PORT` 告知桥端口;stdio 继承;
+//! 4. 事件观察日志(`evt/emit` → stderr);
+//! 5. dsh 退出且桥断连即收敛。
+//!
+//! 本文件零 dsh 知识:dsh 只是它拉起的一个进程。
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use aimux_core::language_model::LanguageModel;
-use aimux_core::options::CallOptions;
-use aimux_core::result::{GenerateResult, StreamResult};
-use rutis_cordis::{Bridge, BridgeConfig, ExpectedHost, TcpWire};
-use rutis_dsh::LlmSeam;
+use aimux_llm::{AimuxLlmPlugin, LlmService, llm_service_key};
+use rutis::{Ctx, FiberState, FiberView};
+use rutis_cordis::{Bridge, BridgeConfig, ExpectedHost, ServiceDispatch, TcpWire};
 use serde_json::json;
 
 #[tokio::main]
 async fn main() {
-    // 无声退出取证:被外部杀(Smart App Control 等)不会有任何输出,
-    // panic 与正常返回都必须留下最后一行日志。
+    // 无声退出取证:panic 与正常返回都必须留下最后一行日志。
     std::panic::set_hook(Box::new(|info| {
         eprintln!("[rutis-dsh] PANIC: {info}");
     }));
@@ -33,8 +30,7 @@ async fn main() {
         _ => {
             eprintln!("usage: rutis-dsh up");
             eprintln!();
-            eprintln!("env: AIMUX_PROVIDER / AIMUX_MODEL (default deepseek / deepseek-chat),");
-            eprintln!("      RUTIS_DSH_BIN (default: dsh from PATH), provider keys per provider");
+            eprintln!("env: RUTIS_DSH_BIN (default: dsh from PATH); model keys per provider");
             std::process::exit(2)
         }
     }
@@ -58,61 +54,37 @@ fn truncate_chars(s: &str, max: usize) -> String {
     format!("{}…", &s[..end])
 }
 
-/// 未配置的模型占位:构造失败(如缺 key)不阻止宿主启动——web 界面、
-/// 插件管理都不需要 key;真正的模型调用发生时,错误经桥回传到 dsh 的
-/// 界面显示(§十.4 精神:桥侧问题不拖垮 TS 栈)。
-struct UnconfiguredModel {
-    reason: String,
-}
-
-#[async_trait::async_trait]
-impl LanguageModel for UnconfiguredModel {
-    fn provider(&self) -> &str {
-        "unconfigured"
-    }
-
-    fn model_id(&self) -> &str {
-        "unconfigured"
-    }
-
-    async fn do_generate(
-        &self,
-        _options: &CallOptions,
-    ) -> Result<GenerateResult, aimux_core::error::AiMuxError> {
-        Err(aimux_core::error::AiMuxError::Other(self.reason.clone()))
-    }
-
-    async fn do_stream(
-        &self,
-        _options: &CallOptions,
-    ) -> Result<StreamResult, aimux_core::error::AiMuxError> {
-        Err(aimux_core::error::AiMuxError::Other(self.reason.clone()))
+/// 等插件到达目标态(装载是异步的;服务就绪以 fiber Active 为准)。
+async fn wait_state(view: &FiberView, want: FiberState) {
+    let mut rx = view.watch();
+    loop {
+        if rx.borrow().state == want {
+            return
+        }
+        rx.changed().await.expect("fiber driver alive");
     }
 }
 
 async fn up() {
-    let provider_name = std::env::var("AIMUX_PROVIDER").unwrap_or_else(|_| "deepseek".into());
-    let model_id = std::env::var("AIMUX_MODEL").unwrap_or_else(|_| "deepseek-chat".into());
-    let model: Arc<dyn LanguageModel> = match aimux_providers::provider(&provider_name, None, &model_id, None) {
-        Ok(model) => Arc::from(model),
-        Err(e) => {
-            eprintln!("[rutis-dsh] model not configured ({provider_name}/{model_id}: {e}) —");
-            eprintln!("[rutis-dsh] the host still boots (web/plugin management need no key);");
-            eprintln!("[rutis-dsh] model calls will surface this error on the dsh side.");
-            eprintln!("[rutis-dsh] set the provider key (e.g. DEEPSEEK_API_KEY) and restart to enable them.");
-            Arc::new(UnconfiguredModel { reason: format!("provider {provider_name}/{model_id} not configured: {e}") })
-        }
-    };
+    // ── rutis 运行时:装载 aimux-llm,llm 服务进注册表 ──
+    let ctx = Ctx::root().expect("rutis runtime root (needs tokio)");
+    let plugin = AimuxLlmPlugin::from_env();
+    let view = ctx.plugin(plugin);
+    wait_state(&view, FiberState::Active).await;
+    let llm: Arc<dyn LlmService> = ctx
+        .get_as::<dyn LlmService>(llm_service_key())
+        .expect("aimux-llm registered the llm service");
+
+    // ── 宿主进程:官方 dsh(stdio 归它自己)──
     let dsh_bin = std::env::var("RUTIS_DSH_BIN").unwrap_or_else(|_| "dsh".into());
-    // RUTIS_DSH_BIN 支持空格分隔的多段命令(如 "node --import tsx bin.js"):
-    // 开发机上官方 CLI 常以 node 直跑其 bin 入口。
+    // RUTIS_DSH_BIN 支持空格分隔的多段命令(如 "node --import tsx bin.js")。
     let mut dsh_command: Vec<String> = shell_split(&dsh_bin);
     let dsh_display = dsh_command.first().cloned().unwrap_or_else(|| dsh_bin.clone());
     dsh_command.extend(std::env::args().skip(2));
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind bridge channel");
     let port = listener.local_addr().expect("addr").port();
-    eprintln!("[rutis-dsh] bridge channel on 127.0.0.1:{port} (llm: {provider_name}/{model_id})");
+    eprintln!("[rutis-dsh] bridge channel on 127.0.0.1:{port} (services from registry)");
 
     let mut dsh = match tokio::process::Command::new(&dsh_display)
         .env("RUTIS_BRIDGE_PORT", port.to_string())
@@ -124,7 +96,7 @@ async fn up() {
             // Windows:npm 全局命令是 .cmd shim(CreateProcess 只认 .exe),
             // 经 cmd /c 解析 PATH 里的 shim。RUTIS_DSH_BIN 显式多段
             // (node bin.js)不经此层。
-            let via_cmd = tokio::process::Command::new("cmd");
+            let mut via_cmd = tokio::process::Command::new("cmd");
             #[cfg(windows)]
             {
                 via_cmd.arg("/c").args(&dsh_command);
@@ -153,19 +125,15 @@ async fn up() {
         .expect("dsh connects within 60s (is the rutis-bridge plugin in the profile?)")
         .expect("accept");
 
-    // 事件观察:evt/emit 回流打 stderr(stdout 属于 dsh 的交互面)。
-    // 与 llm 缝的 on_request 合并成一个 InboundHooks——此前把 seam.hooks()
-    // 整个传入,这里的 on_notify 被丢弃,事件观察从未生效过。
-    let seam = LlmSeam::new(model, provider_name.clone(), model_id.clone());
-    let mut hooks = seam.hooks();
+    // ── 桥:注册表驱动的服务分发 + 事件观察,合并为一套钩子 ──
+    let face = rutis_dsh::LlmFace::new(llm);
+    let dispatch = ServiceDispatch::new(vec![face]);
+    let mut hooks = dispatch.hooks();
     hooks.on_notify = Some(Arc::new(|method, params| {
         Box::pin(async move {
             if method == "evt/emit" {
-                // 载荷摘要(截断):agent/* 的载荷是纯数据(插件侧已过替身
-                // 表),日志可见性到"形状级"即可——L4/M7 保真断言在测试里
-                // 做,不靠这个日志。
-                let summary = serde_json::to_string(&params["params"])
-                    .unwrap_or_else(|_| "?".into());
+                // 载荷摘要(截断):形状级可见性;保真断言在测试里做。
+                let summary = serde_json::to_string(&params["params"]).unwrap_or_else(|_| "?".into());
                 let summary = truncate_chars(&summary, 160);
                 eprintln!("[rutis-dsh] evt {} {}", params["event"], summary);
             }
@@ -176,9 +144,9 @@ async fn up() {
         BridgeConfig::default(),
         hooks,
         ExpectedHost::protocol(1),
-        json!({ "services": ["llm"], "wfKinds": [], "scopes": [] }),
+        json!({ "services": dispatch.names(), "wfKinds": [], "scopes": [] }),
     );
-    seam.attach(bridge.clone());
+    dispatch.attach(bridge.clone());
     match bridge.ready().await {
         Ok(hello) => {
             eprintln!("[rutis-dsh] handshake ok: {} — bridged", hello["base"].as_str().unwrap_or("?"))
@@ -190,11 +158,9 @@ async fn up() {
         }
     }
 
-    // 收敛以**桥断连**为权威信号:Windows 上 cmd /c 包装层的退出时序不可
-    // 信(可能先于真实进程返回),把子进程退出当主信号会在 dsh 还活着时
-    // 提前收摊,反过来掐死通道并砸出宿主侧 ECONNRESET。两侧都等齐才退;
-    // 退出**不杀 dsh**——桥断了宿主继续跑(§十.4),模型调用由插件按
-    // bridgeDisconnected 拒绝。
+    // 收敛以**桥断连**为权威信号(时序不可信的包装层存在时,子进程退出
+    // 可能先于真实进程);两侧都等齐才退;退出**不杀 dsh**——桥断了宿主
+    // 继续跑(§十.4),模型调用由插件按 bridgeDisconnected 拒绝。
     let mut dsh_exited = false;
     let mut bridge_closed = false;
     while !(dsh_exited && bridge_closed) {
