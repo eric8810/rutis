@@ -89,9 +89,13 @@ export function apply(ctx: Context, pluginConfig: PluginConfig = {}): void {
   }
   profiles()
 
-  // 凭据:credentials 服务是可选组合,软查询;per-request 解析。
-  const credentials = (ctx as unknown as { get?: (name: string) => unknown }).get?.('credentials') as CredentialResolver | undefined
+  // 凭据:credentials 服务是可选组合,软查询;装载顺序晚于本插件时
+  // apply 期拿不到句柄,故**每次解析时查询**而不是 apply 期捕获
+  // (Windows 机装载顺序恰好 credentials 在前,掩盖过这个时序)。
+  const credentialsAt = (): CredentialResolver | undefined =>
+    (ctx as unknown as { get?: (name: string) => unknown }).get?.('credentials') as CredentialResolver | undefined
   const resolveKey = async (ref: string): Promise<string | undefined> => {
+    const credentials = credentialsAt()
     if (credentials === undefined) return process.env[ref]
     return (await credentials.resolve(ref))?.value
   }
