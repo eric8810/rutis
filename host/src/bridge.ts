@@ -187,6 +187,10 @@ export interface AimuxProviderProfile {
   apiKeyEnv?: string
   /** 配置面显示名;默认路由名。 */
   displayName?: string
+  /** 后端 aimux provider 名;缺省即路由名。路由名是 dsh 侧标签
+   * (须避开官方 pi-ai 已声明的 provider 名,如 deepseek),后端名是
+   * aimux 侧的真名——两者解耦后,一条 aimux provider 可以挂多条路由。 */
+  provider?: string
 }
 
 /** 桥 adapter 的装配面。 */
@@ -239,6 +243,11 @@ export class BridgeAdapter extends LlmAdapter {
     return { id: provider, name: this.options.profiles().get(provider)?.displayName ?? provider }
   }
 
+  /** 路由名 → 后端 aimux provider 名(profile.provider,缺省路由名)。 */
+  private backendFor(route: string): string {
+    return this.options.profiles().get(route)?.provider ?? route
+  }
+
   /** 通用 req/res 过线(listModels 等非流方法)。 */
   private rpc<T>(method: string, params: Record<string, unknown>): Promise<T> {
     const id = this.nextId++
@@ -260,7 +269,7 @@ export class BridgeAdapter extends LlmAdapter {
     if (this.isDead()) return []
     const apiKey = await this.keyFor(provider).catch(() => undefined)
     const result = await this.rpc<{ models: Array<{ id: string }> }>('listModels', {
-      provider,
+      provider: this.backendFor(provider),
       ...(apiKey !== undefined ? { credentials: { apiKey } } : {}),
     })
     return (result.models ?? []).map(m => ({ provider, id: m.id, name: m.id }))
@@ -279,7 +288,8 @@ export class BridgeAdapter extends LlmAdapter {
       params: {
         service: 'llm', method: 'stream',
         params: {
-          options: JSON.parse(JSON.stringify(options ?? {})),
+          // 过线的是后端 provider 名(路由名在 dsh 侧已消费完毕)。
+          options: { ...JSON.parse(JSON.stringify(options ?? {})), provider: this.backendFor(options.provider) },
           ...(apiKey !== undefined ? { credentials: { apiKey } } : {}),
         },
       },

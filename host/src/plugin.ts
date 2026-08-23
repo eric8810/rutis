@@ -34,6 +34,7 @@ const NS = settingsNamespace('llm-aimux')
 const ProviderProfile: z<AimuxProviderProfile> = z.object({
   apiKeyEnv: z.string().role('credential-ref'),
   displayName: z.string(),
+  provider: z.string(),
 })
 
 /** 插件与 settings section 共用的 schema:providers dict,key 即路由。 */
@@ -113,7 +114,15 @@ export function apply(ctx: Context, pluginConfig: PluginConfig = {}): void {
     if (entries.length === 0) return
     if (deepEqualJson(entries, directoryFacts)) return
     if (directory === undefined) {
-      directory = ctx.llm.registerConfigurableProviders(entries)
+      // fail-soft:同名 configurable provider 已被别的插件(如官方 pi-ai 的
+      // deepseek)声明时,dsh-llm 会抛 DUPLICATE——告警并放弃该面,绝不
+      // 崩宿主;改名路由即可解(§十.4 精神)。
+      try {
+        directory = ctx.llm.registerConfigurableProviders(entries)
+      } catch (e) {
+        console.error(`[rutis-bridge] configurable-provider declaration rejected (route name collides with another plugin?): ${e instanceof Error ? e.message : String(e)}`)
+        return
+      }
     } else {
       directory.replace(entries)
     }
@@ -132,7 +141,12 @@ export function apply(ctx: Context, pluginConfig: PluginConfig = {}): void {
         registeredFacts = facts
         return
       }
-      registration = ctx.llm.registerAdapter(facts, adapter)
+      try {
+        registration = ctx.llm.registerAdapter(facts, adapter)
+      } catch (e) {
+        console.error(`[rutis-bridge] adapter registration rejected (route name collides with another plugin?): ${e instanceof Error ? e.message : String(e)}`)
+        return
+      }
     } else {
       registration.replace(facts)
     }
