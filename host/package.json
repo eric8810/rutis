@@ -33,20 +33,17 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.1",
+    "@deepseek-ai/dsh-credentials": "0.1.1-rc.2",
     "@deepseek-ai/dsh-llm": "0.1.1-rc.2",
-    "@deepseek-ai/dsh-credentials": "0.1.1-rc.2"
-  },
-  "optionalDependencies": {
-    "rutis-bridge-darwin-arm64": "0.1.0",
-    "rutis-bridge-darwin-x64": "0.1.0",
-    "rutis-bridge-linux-x64-gnu": "0.1.0",
-    "rutis-bridge-linux-x64-musl": "0.1.0",
-    "rutis-bridge-win32-x64": "0.1.0"
+    "@deepseek-ai/dsh-settings": "0.1.1-rc.2",
+    "@deepseek-ai/schemastery": "3.18.1"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.1",
     "@deepseek-ai/dsh-credentials": "^0.1.1-rc.2",
     "@deepseek-ai/dsh-llm": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-settings": "^0.1.1-rc.2",
+    "@deepseek-ai/schemastery": "^3.18.1",
     "@types/node": "^26.2.0",
     "esbuild": "^0.28.2",
     "tsx": "^4.20.0",

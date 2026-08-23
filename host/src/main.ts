@@ -22,7 +22,11 @@ async function main() {
   const conn = connectBridge(port)
   const ctx = new Context()
   await ctx.plugin(LlmRuntime)
-  ctx.llm.registerAdapter(['aimux-bridge'], new BridgeAdapter(conn))
+  const adapter = new BridgeAdapter(conn, {
+    profiles: () => new Map([['aimux-bridge', {}]]),
+    resolveKey: async () => undefined,
+  })
+  ctx.llm.registerAdapter(['aimux-bridge'], adapter)
   await conn.helloDone
 
   assert.ok(ctx.llm.listProviders().some(p => p.id === 'aimux-bridge'), 'adapter registered')

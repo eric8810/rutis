@@ -91,7 +91,7 @@ fn text_message(role: Role, text: &str) -> LanguageModelPromptMessage {
 /// per-key provider 工厂:(api_key, model) → provider。默认实现走 aimux;
 /// 测试注入 fake 以断言 keyed 路由(不联网)。
 pub type ProviderFactory =
-    Arc<dyn Fn(&str, &str) -> Result<Arc<dyn LanguageModel>, String> + Send + Sync>;
+    Arc<dyn Fn(&str, &str, &str) -> Result<Arc<dyn LanguageModel>, String> + Send + Sync>;
 
 /// llm 缝本体:挂进桥的入站钩子,服务 `svc/call {service:"llm",
 /// method:"stream"}`。
@@ -106,6 +106,7 @@ pub struct LlmSeam {
     fallback_model: String,
     factory: ProviderFactory,
     keyed: Mutex<std::collections::HashMap<String, Arc<dyn LanguageModel>>>,
+    list_cache: Mutex<std::collections::HashMap<String, Value>>,
     bridge: OnceLock<Bridge>,
 }
 
@@ -116,8 +117,8 @@ impl LlmSeam {
         fallback_model: impl Into<String>,
     ) -> Arc<LlmSeam> {
         let provider_name = provider_name.into();
-        Self::with_factory(fallback, provider_name.clone(), fallback_model, Arc::new(move |key, model| {
-            aimux_providers::provider(&provider_name, Some(key.to_owned()), model, None)
+        Self::with_factory(fallback, provider_name.clone(), fallback_model, Arc::new(move |provider, key, model| {
+            aimux_providers::provider(provider, Some(key.to_owned()), model, None)
                 .map(|m| Arc::from(m) as Arc<dyn LanguageModel>)
                 .map_err(|e| e.to_string())
         }))
@@ -136,6 +137,7 @@ impl LlmSeam {
             fallback_model: fallback_model.into(),
             factory,
             keyed: Mutex::new(std::collections::HashMap::new()),
+            list_cache: Mutex::new(std::collections::HashMap::new()),
             bridge: OnceLock::new(),
         })
     }
@@ -164,16 +166,59 @@ impl LlmSeam {
             })
         }
         let (service, op) = (params["service"].as_str(), params["method"].as_str());
-        if service != Some("llm") || op != Some("stream") {
+        if service != Some("llm") {
             return Err(RemoteError {
                 code: "unhandled".into(),
-                message: format!("llm seam only serves llm/stream, got {service:?}/{op:?}"),
+                message: format!("llm seam only serves llm/*, got {service:?}"),
             })
         }
         let bridge = self.bridge.get().ok_or_else(|| RemoteError {
             code: "notAttached".into(),
             message: "LlmSeam::attach was not called after Bridge::start".into(),
         })?;
+        let api_key = params
+            .pointer("/params/credentials/apiKey")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+
+        if op == Some("listModels") {
+            // 多路由聚合的目录面:页面 picker/Models 页经 adapter.listModels
+            // 拉取该路由(= aimux provider 名)的真实模型表。
+            let provider = params
+                .pointer("/params/provider")
+                .and_then(Value::as_str)
+                .unwrap_or(&self.provider_name)
+                .to_owned();
+            let key = api_key.unwrap_or_default();
+            let cache_key = format!("list\u{0}{provider}\u{0}{key}");
+            let cached = self.list_cache.lock().unwrap().get(&cache_key).cloned();
+            let models: Value = match cached {
+                Some(cached) => cached,
+                None => {
+                    let handle = aimux_providers::provider_handle(&provider, if key.is_empty() { None } else { Some(key.clone()) }, None)
+                        .map_err(|e| RemoteError { code: "llmProvider".into(), message: e.to_string() })?;
+                    let listed = handle
+                        .list_models()
+                        .await
+                        .map_err(|e| RemoteError { code: "llmListModels".into(), message: e.to_string() })?;
+                    let models: Value = listed
+                        .into_iter()
+                        .map(|m| json!({ "id": m.id, "ownedBy": m.owned_by, "created": m.created }))
+                        .collect::<Vec<_>>()
+                        .into();
+                    self.list_cache.lock().unwrap().insert(cache_key, models.clone());
+                    models
+                }
+            };
+            eprintln!("[rutis-dsh] llm/listModels id={id} provider={provider} models={}", models.as_array().map(Vec::len).unwrap_or(0));
+            return Ok(json!({ "models": models }))
+        }
+        if op != Some("stream") {
+            return Err(RemoteError {
+                code: "unhandled".into(),
+                message: format!("llm seam only serves llm/stream and llm/listModels, got {op:?}"),
+            })
+        }
         let generate = params
             .pointer("/params/options")
             .cloned()
@@ -188,27 +233,30 @@ impl LlmSeam {
             generate.get("messages").and_then(Value::as_array).map(Vec::len).unwrap_or(0),
             generate.get("tools").and_then(Value::as_array).map(Vec::len).unwrap_or(0),
             if generate.get("system").is_some() { "yes" } else { "no" },
-            if params.pointer("/params/credentials/apiKey").is_some() { "dsh" } else { "env" },
+            if api_key.is_some() { "dsh" } else { "env" },
         );
-        // 模型选择:过线值(页面/组合)优先,fallback 仅兜底;凭据:dsh 侧
-        // 解析的 key 随请求过线时按 (key, model) 构造并缓存 provider。
+        // 路由 = 过线 provider 名(settings 驱动的 aimux 路由;无 profile
+        // 的旧形态回落 runner env 的 provider)。模型以过线值优先。
+        let wire_provider = generate
+            .get("provider")
+            .and_then(Value::as_str)
+            .filter(|p| !p.is_empty() && *p != "aimux-bridge")
+            .unwrap_or(&self.provider_name)
+            .to_owned();
         let wire_model = generate
             .get("model")
             .and_then(Value::as_str)
             .filter(|m| !m.is_empty())
             .unwrap_or(&self.fallback_model)
             .to_owned();
-        let model: Arc<dyn LanguageModel> = match params
-            .pointer("/params/credentials/apiKey")
-            .and_then(Value::as_str)
-        {
+        let model: Arc<dyn LanguageModel> = match api_key {
             Some(api_key) => {
-                let cache_key = format!("{api_key}\u{0}{wire_model}");
+                let cache_key = format!("{api_key}\u{0}{wire_provider}\u{0}{wire_model}");
                 let mut keyed = self.keyed.lock().unwrap();
                 if let Some(model) = keyed.get(&cache_key) {
                     Arc::clone(model)
                 } else {
-                    match (self.factory)(api_key, &wire_model) {
+                    match (self.factory)(&wire_provider, &api_key, &wire_model) {
                         Ok(model) => {
                             keyed.insert(cache_key, Arc::clone(&model));
                             model

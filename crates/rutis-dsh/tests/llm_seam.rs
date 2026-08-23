@@ -163,10 +163,10 @@ async fn dsh_side_api_key_routes_through_the_injected_factory() {
     let fallback_touched: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
     let touched = Arc::clone(&fallback_touched);
     let fallback: Arc<dyn LanguageModel> = Arc::new(FailLlm { touched: touched });
-    let seen: Arc<Mutex<Vec<(String, String)>>> = Arc::new(Mutex::new(Vec::new()));
+    let seen: Arc<Mutex<Vec<(String, String, String)>>> = Arc::new(Mutex::new(Vec::new()));
     let seen_factory = Arc::clone(&seen);
-    let factory: rutis_dsh::llm::ProviderFactory = Arc::new(move |key, model| {
-        seen_factory.lock().unwrap().push((key.to_owned(), model.to_owned()));
+    let factory: rutis_dsh::llm::ProviderFactory = Arc::new(move |provider, key, model| {
+        seen_factory.lock().unwrap().push((provider.to_owned(), key.to_owned(), model.to_owned()));
         Ok(Arc::new(ChunkedLlm))
     });
 
@@ -192,7 +192,7 @@ async fn dsh_side_api_key_routes_through_the_injected_factory() {
             params: json!({
                 "service": "llm", "method": "stream",
                 "params": {
-                    "options": { "provider": "aimux-bridge", "model": "deepseek-v4-flash", "messages": [] },
+                    "options": { "provider": "deepseek", "model": "deepseek-v4-flash", "messages": [] },
                     "credentials": { "apiKey": "sk-from-web-page" },
                 },
             }),
@@ -209,7 +209,7 @@ async fn dsh_side_api_key_routes_through_the_injected_factory() {
         }
     }
     let calls = seen.lock().unwrap();
-    assert_eq!(calls.as_slice(), [("sk-from-web-page".to_string(), "deepseek-v4-flash".to_string())]);
+    assert_eq!(calls.as_slice(), [("deepseek".to_string(), "sk-from-web-page".to_string(), "deepseek-v4-flash".to_string())]);
     assert!(!*fallback_touched.lock().unwrap(), "fallback must stay untouched");
     drop(bridge);
 }

@@ -180,37 +180,91 @@ class StreamCall {
 
 /** 桥 adapter(§四.1):stream 过线,chunk 流回流;注册面同步成员是注册期
  * 快照(F6 复核结论),继承 LlmAdapter 默认实现。 */
-/** 桥 adapter 的可选装配面。 */
-export interface BridgeAdapterOptions {
-  /** 每次调用解析凭据(dsh credentials 体系);返回值随请求过线,
-   * Rust 侧用它构造 provider。 */
-  resolveKey?: () => Promise<string | undefined>
+
+/** 一条 aimux 路由的 settings profile(llm-aimux: providers.<route>)。 */
+export interface AimuxProviderProfile {
+  /** Credential reference(env 名),per-request 经 ctx.credentials 解析。 */
+  apiKeyEnv?: string
+  /** 配置面显示名;默认路由名。 */
+  displayName?: string
 }
 
-/** 桥 adapter(§四.1):stream 过线,chunk 流回流;注册面同步成员是注册期
- * 快照(F6 复核结论),继承 LlmAdapter 默认实现。 */
+/** 桥 adapter 的装配面。 */
+export interface BridgeAdapterOptions {
+  /** 当前生效的 profiles(settings 驱动,memoized)。 */
+  profiles: () => ReadonlyMap<string, AimuxProviderProfile>
+  /** 按 credential ref 解析 key(dsh credentials 体系)。 */
+  resolveKey: (ref: string) => Promise<string | undefined>
+  /** 无 profile 路由的兜底 key(验收宿主形态);缺省即无兜底。 */
+  fallbackKey?: () => Promise<string | undefined>
+}
+
+/**
+ * 桥 adapter(§四.1 的多路由聚合形态,对标 llm-pi-ai):路由集由 settings
+ * 的 providers dict 驱动;每条路由 = 一个 aimux provider。stream 与
+ * listModels 均过线,凭据 per-request 解析后随请求携带。注册面同步成员
+ * 是注册期快照(F6 复核结论)。
+ */
 export class BridgeAdapter extends LlmAdapter {
   private nextId = 100
   private readonly pending = new Map<number, StreamCall>()
+  private readonly rpcPending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>()
 
-  constructor(conn: BridgeConnection, options: BridgeAdapterOptions = {}) {
+  constructor(conn: BridgeConnection, private readonly options: BridgeAdapterOptions) {
     super()
     conn.onFrame(frame => {
       if (frame.type === 'ntf' && frame.method === 'llm/chunk') {
         const params = frame.params as Record<string, unknown>
         this.pending.get(params.dispatchId as number)?.mapPart(params.part as Record<string, unknown>)
       } else if (frame.type === 'res') {
-        this.pending.get(frame.id as number)?.settle(frame.ok === true, frame.error ?? frame.result)
+        const id = frame.id as number
+        const waiter = this.rpcPending.get(id)
+        if (waiter !== undefined) {
+          this.rpcPending.delete(id)
+          if (frame.ok === true) waiter.resolve(frame.result ?? null)
+          else waiter.reject(new LlmError(String((frame.error as { message?: string })?.message ?? 'rpc failed'), String((frame.error as { code?: string })?.code ?? 'bridgeError')))
+          return
+        }
+        this.pending.get(id)?.settle(frame.ok === true, frame.error ?? frame.result)
       }
     })
     this.send = conn.send
     this.isDead = conn.dead
-    this.resolveKey = options.resolveKey
   }
 
   private readonly send: (frame: Frame) => void
   private readonly isDead: () => boolean
-  private readonly resolveKey: (() => Promise<string | undefined>) | undefined
+
+  providerInfo(provider: string): { id: string; name: string } {
+    return { id: provider, name: this.options.profiles().get(provider)?.displayName ?? provider }
+  }
+
+  /** 通用 req/res 过线(listModels 等非流方法)。 */
+  private rpc<T>(method: string, params: Record<string, unknown>): Promise<T> {
+    const id = this.nextId++
+    return new Promise<T>((resolve, reject) => {
+      this.rpcPending.set(id, { resolve: resolve as (v: unknown) => void, reject })
+      this.send({ type: 'req', id, method: 'svc/call', params: { service: 'llm', method, params } })
+    })
+  }
+
+  /** 该路由的 key:profile 的 apiKeyEnv 解析;无 profile 用兜底。 */
+  private async keyFor(provider: string): Promise<string | undefined> {
+    const profile = this.options.profiles().get(provider)
+    if (profile === undefined) return this.options.fallbackKey?.()
+    if (profile.apiKeyEnv === undefined) return undefined
+    return this.options.resolveKey(profile.apiKeyEnv)
+  }
+
+  async listModels(provider: string): Promise<Array<{ provider: string; id: string; name: string }>> {
+    if (this.isDead()) return []
+    const apiKey = await this.keyFor(provider).catch(() => undefined)
+    const result = await this.rpc<{ models: Array<{ id: string }> }>('listModels', {
+      provider,
+      ...(apiKey !== undefined ? { credentials: { apiKey } } : {}),
+    })
+    return (result.models ?? []).map(m => ({ provider, id: m.id, name: m.id }))
+  }
 
   async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     if (this.isDead()) {
@@ -219,9 +273,7 @@ export class BridgeAdapter extends LlmAdapter {
     const id = this.nextId++
     const call = new StreamCall()
     this.pending.set(id, call)
-    // dsh 侧凭据(per-request 解析)随请求过线;解析失败不阻塞调用——
-    // Rust 侧还有 env 兜底。
-    const apiKey = await this.resolveKey?.().catch(() => undefined)
+    const apiKey = await this.keyFor(options.provider).catch(() => undefined)
     this.send({
       type: 'req', id, method: 'svc/call',
       params: {
