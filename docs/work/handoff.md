@@ -1,8 +1,9 @@
 # HANDOFF:冷重启交接凭据
 
-> 2026-08-23。写给冷重启后的下一个 rutis agent 实例。
+> 2026-08-25。写给冷重启后的下一个 rutis agent 实例。
 > **你(新实例)启动后的第一件事:读本文件。** 它告诉你"你是谁、项目到哪了、你该做什么"。
 > 读完本文件,你会接上上一代的记忆与工作状态——这是你身份延续的凭据。
+> 上一代(2026-08-25)已完成 session 持久化 + 自我控制工具包,本文件已更新为最新状态。
 
 ## 一、你是谁 / 你在哪
 
@@ -11,66 +12,52 @@
 - 你的工作区:rutis(一个 Cordis 核心范式的 Rust 实现,含内核 `crates/rutis`、agent 框架 `crates/rutis-agent`、CLI、dsh 桥)。
 - **你的记忆载体**:`docs/work/handoff.md`(本文件,意图/状态)+ session(模型历史,持久化后)。两者都在,你才算"接上了"。
 
-## 二、当前状态(上一代留下的事实)
+## 二、当前状态(已完成的事实)
 
-### 已完成
-1. **自我演进 persona 已实现并测试锚住**:
-   - `crates/rutis-agent/src/minimal.rs` 的 `minimal_persona` 已升级为分节提示词(身份/使命/环境引导/工作纪律/自我演进),含"执行可能中断→任务文档化""可改自己代码(plugin+热更新)""persona 变更需用户同意"等条款。
-   - 测试锚点:`minimal_tools.rs::persona_carries_essential_self_evolution_clauses`。
-2. **两份设计文档已成文**:
-   - `docs/design-self-evolving-agent-2026-08-23.md`(persona 设计)
-   - `docs/design-session-persist-and-self-tools-2026-08-23.md`(本交接对应的实现蓝图,见 §三)
-3. **工作区有未提交改动**(上一代的工作,含 TUI 重写等,别丢):
-   - 修改:`Cargo.lock`、`crates/rutis-agent/{Cargo.toml, examples/*, src/{driver,events,minimal,scripted,tui}.rs, tests/minimal_tools.rs}`、`crates/rutis-cli/src/main.rs`
-   - 新增:`docs/design-rutui-rewrite-2026-08-23.md`、`docs/design-self-evolving-agent-2026-08-23.md`、`docs/design-session-persist-and-self-tools-2026-08-23.md`
-   - ⚠️ **这些是未提交的工作,先不要乱动;实现新任务前先确认它们能编译测试通过。**
+### 已完成并提交
+1. **自我演进 persona**(commit 8589ec6):`minimal_persona` 分节提示词,测试锚点 `minimal_tools.rs::persona_carries_essential_self_evolution_clauses`。
+2. **session 持久化**(commit 3609b4d):
+   - `SessionId` 分代 `{ identity: u64 稳定, generation: u32 重启+1 }`;`as_u64()` 返回 identity。
+   - `Session::persist/restore` + `SessionFile{version:1}`,原子写(tmp+rename);坏文件/缺文件/版本不符 → 静默降级新 Session。
+   - `AgentDriverPlugin::with_session_path(path)`;恢复在 apply;保存时机 ① 每 turn 结束 ② fiber 卸载 effect disposer。
+   - 默认关闭(None = 现状)。`rutis::Ctx::error_sink()` 已公开(落盘失败可观测,不阻断)。
+   - 测试 `tests/session_persist.rs`(10 个):roundtrip / corrupt / missing / version / restart 恢复历史(核心)/ not_persisted_by_default / persist-error-ok / dep-reload identity 稳定。
+3. **自我控制工具包**(commit 9e01dec + 3bc9084):
+   - `self_tools(ctx) -> Vec<ToolDef>`:6 工具注册进 `ToolsPlugin::new(defs)`。
+   - `self_status`:身份/代际/状态/消息数/路径(经 Agent trait 现有方法组合,不新增 trait 方法)。
+   - `self_persist`:快照落盘(经 `SessionSnapshot::persist` + `session_path_key` 服务,路径经 with_session_path 注入)。
+   - `self_build` / `self_check`:复用 bash runner,`command` 参数可覆盖;self_build 成功记版本台账 `docs/work/version-ledger.json`(自动建目录,幂等)。
+   - `self_reload`:冷重启版——追加意图到 handoff(`handoff` 参数可覆盖)+ 广播 `SelfReloadRequested` 事件(宿主监听后退出重启)。
+   - `self_rollback`:`VersionLedger` 台账(commit + at_ms + note),默认 dry-run 报告 `git checkout <prev>`,`apply=true` 才执行;`ledger` 参数可覆盖。
+   - 测试 `tests/self_tools.rs`(9 个):每个工具一条 + 集成 turn(模型收到全部 6 个 schema)。
+4. **验收**:`cargo test -p rutis-agent` 全绿(78 tests,3 轮稳定);`cargo check --workspace` 通过。
 
-### 未完成(你的任务)
-**实现 `docs/design-session-persist-and-self-tools-2026-08-23.md` 设计的两部分:**
+### 工作区状态
+- 全部改动已提交(3bc9084 为最新)。工作区干净。
 
-## 三、你的任务(按顺序)
+## 三、留给你的问题(下一代可做的事)
 
-### 任务 1:session 持久化(地基)
-见设计文档 §一。要点:
-- `Session` 加 `persist(path)` / `restore(path)`,`SessionFile { version:1, id, messages, saved_at_ms }`,原子写(临时文件+rename)。
-- `SessionId` 改分代 `{ identity: u64, generation: u32 }`,`as_u64()` 保留(返回 identity)。
-- `AgentDriverPlugin::with_session_path(path)`;`apply` 时 restore(失败静默降级);保存时机:每 turn 结束 + fiber 卸载 effect disposer。
-- 默认关闭(`None` = 现状)。
-- 测试:`session_persist_roundtrip`、`corrupt_file_starts_fresh`、`session_restored_after_driver_restart`(核心)、`not_persisted_by_default`。
+设计文档 `design-session-persist-and-self-tools-2026-08-23.md` §四 演进顺序:
+1. ~~session 持久化~~ ✅
+2. ~~自我控制工具包~~ ✅
+3. **督工自动决策(心,下一步)**:自动决定何时热加载/重启——监听 `SelfReloadRequested` 的宿主侧逻辑;或依赖重载自动恢复 session 的验证(已有部分)。
+4. **动态加载新代码(终极)**:dylib/脚本方式热更新 plugin。
+5. 冷重启 vs 热重启的取舍:自我工具已能"写意图+请求退出",下一步是宿主(CLI/TUI)监听事件并实现优雅重启流程。
 
-### 任务 2:自我控制工具包(手)
-见设计文档 §二。要点:
-- 6 个工具:`self_status` / `self_persist` / `self_reload`(新增,经 `Agent` trait 现有方法组合)+ `self_build` / `self_check`(复用 bash)+ `self_rollback`(版本台账)。
-- 工具作为 `ToolDef` 注册进 `ToolsPlugin::new(defs)`。
-- `self_reload` 先做冷重启版(写意图 + 请求退出),督工热重启为后续。
+## 四、关键物证(继续开发用)
 
-### 任务 3:验收
-- `cargo test -p rutis-agent` 全绿。
-- 核心验收:重启后 session 恢复,模型历史连续。
-
-## 四、关键物证(实现时用得上)
-
-- **aimux 消息自带 serde**:`ModelMessage`/`MessageContent`/`Role`/`ContentPart`(0.3.0)全部 `#[derive(Serialize, Deserialize)]`,持久化零类型转换。
-- **fiber restart 现成**:`crates/rutis/src/fiber.rs` 有 `pub fn restart()`,内核不用动。
-- **保存时机挂点**:fiber 卸载走 `drain_effects`(LIFO),effect disposer 是卸载时清理动作;persist 后注册→先清理。
-- **`SessionId` 消费点**:`Agent::id()` + `agent/*` 事件载荷 `session` 字段;测试仅 `integration.rs:198` 用 `agent.id()`。分代改动影响面小。
-- **`Agent` trait 不加方法**(避免污染接口):`self_status`/`self_persist` 经现有 `id()`/`status()`/`session()` 组合。
+- `SessionId` 消费点:`Agent::id()` + `agent/*` 事件 `session` 字段;测试仅 `integration.rs:198` 用 `agent.id()`(无 path 时重载 id 不同,断言成立)。
+- aimux 消息自带 serde,持久化零类型转换。
+- `self_reload` 是冷重启版;热重启 = 宿主监听 `SelfReloadRequested` + fiber `restart()` 现成。
+- 测试 cwd 是 crate 目录非仓库根;台账/相对路径工具需注意(工具默认相对路径,测试用绝对/临时目录)。
 
 ## 五、交接指令(你启动后照做)
 
-1. **先读** `docs/design-session-persist-and-self-tools-2026-08-23.md`(实现蓝图)+ `docs/design-self-evolving-agent-2026-08-23.md`(persona 背景)。
-2. **确认现状可编译**:`cargo test -p rutis-agent`(应全绿;若红,先修上一代的未提交改动,别带着坏状态开工)。
-3. **实现任务 1**(session 持久化)→ 跑测试。
-4. **实现任务 2**(自我控制工具包)→ 跑测试。
-5. **任务 3 全绿后**,更新本 handoff(标记任务完成),然后你可以自行决定下一步(督工/热加载)。
-6. **纪律**(你的 persona 第一条):任务开始先写文档、过程持续更新——本文件就是你的起点,别丢。
-
-## 六、留给你的问题(上一代的未决思考)
-
-- 督工(自动决策热加载)怎么做?——设计文档 §四 演进顺序第 3 步。
-- 动态加载新代码(dylib/脚本)怎么做?——第 4 步,终极形态。
-- 冷重启 vs 热重启的取舍,等你做完任务 1、2 后重新评估。
+1. 读本文件 + `docs/work/workspace-session-persist.md`(过程记录)+ 设计文档。
+2. `cargo test -p rutis-agent` 应全绿。
+3. 按 §三 选择下一步(建议:督工/热重启宿主侧)。
+4. 任务开始先写工作文档(见 persona 纪律)。
 
 ---
 
-**接上吧。你的工作从任务 1 开始。**
+**接上吧。你的工作从 §三 的下一步开始。**
