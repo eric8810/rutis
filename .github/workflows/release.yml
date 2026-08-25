@@ -86,6 +86,6 @@ jobs:
             --title "rutis-cli ${VERSION}" \
             --notes "Binary release of rutis-cli (minimal coding agent: bash + replace_text).
 
-          Install: download the tar.gz for your platform, verify the .sha256, extract, and put \`rutis-cli\` on your PATH. Or \`cargo install rutis-cli\`.
+          Install: download the tar.gz for your platform, verify the .sha256, extract, and put \`rutis-cli\` on your PATH. (\`cargo install rutis-cli\` installs the older crates.io build without the rutui TUI.)
 
           Requires an aimux provider key at runtime (e.g. \`DEEPSEEK_API_KEY\`); try \`rutis-cli --scripted\` for an offline demo."

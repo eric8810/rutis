@@ -19,7 +19,7 @@ Cordis 核心范式的 Rust 惯用实现(自 [min-cordis](https://github.com/eri
 | [`aimux-llm`](crates/aimux-llm) | 独立 llm 服务插件:rutis 插件形态(apply → 注册 `llm` 服务),aimux 原生 DTO/StreamPart 即中性协议 schema;工厂/keyed 缓存/listModels 缓存/回落全在此,零桥零 dsh 知识 |
 | [`rutis-dsh`](crates/rutis-dsh) | 入口与组合根:起 rutis 运行时、装载 aimux-llm、把注册表中的服务经业务无关桥供给宿主进程(`rutis-dsh up`);`LlmFace` 是纯形状胶水,零 dsh 知识 |
 | [`rutis-agent`](crates/rutis-agent) | 最小 agent 框架:aimux `LanguageModel` 服务 + `ToolsPlugin` + `AgentDriverPlugin`(流式 `followup` + waterfall 中间件 + `agent/*` 事件广播)+ 内存 session + ratatui TUI;minimal mode 内置 `bash` + `replace_text` 工具(设计见 [docs/design-minimal-mode-2026-08-18.md](docs/design-minimal-mode-2026-08-18.md)) |
-| [`rutis-cli`](crates/rutis-cli) | 命令行形态:最小 coding agent TUI(`cargo install rutis-cli` 或 [GitHub Releases](https://github.com/eric8810/rutis/releases) 下载) |
+| [`rutis-cli`](crates/rutis-cli) | 命令行形态:最小 coding agent TUI([GitHub Releases](https://github.com/eric8810/rutis/releases) 下载最新;`cargo install rutis-cli` 为 crates.io 旧版,不含 rutui TUI) |
 
 agent crate 一句话:**一个 aimux [`LanguageModel`](../aimux) 服务 + 一个 `ToolRegistry` 插件 + 一个实现 `Agent` 接口的 driver 插件 + 一个内存 session(连续 loop 的事实源)**。设计见 [docs/design-min-agent-2026-08-18.md](docs/design-min-agent-2026-08-18.md) 与 [docs/design-agent-verification-tui-2026-08-18.md](docs/design-agent-verification-tui-2026-08-18.md)。
 
@@ -31,7 +31,8 @@ agent / cli crate 经 crates.io 版本消费 [aimux](https://crates.io/crates/ai
 
 ```bash
 cargo test                                    # 全量:内核对拍 + agent 三层中的前两层
-cargo install -p rutis-cli --path crates/rutis-cli   # 装 CLI(或 cargo install rutis-cli)
+# 最新版:GitHub Releases 下载,或源码构建(cargo build -p rutis-cli)
+# crates.io 的 cargo install rutis-cli 为旧版(不含 rutui TUI,见 design-rutui-rewrite)
 rutis-cli --scripted                          # 无 key 离线演示
 cargo run -p rutis-agent --example demo       # 真实后端两轮对话 + 依赖驱动驱逐(需 DEEPSEEK_API_KEY)
 cargo run -p rutis-agent --example tui        # 交互式 TUI,流式逐字 / 工具可见 / Esc 取消

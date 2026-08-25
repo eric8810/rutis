@@ -30,3 +30,15 @@
 ## 边界
 - 不做 matrix(单平台足够防回归;release 已有平台矩阵)。
 - 不缓存 node_modules(无 node 步骤)。
+
+## 追加发现与处理(同一轮)
+- **path 依赖可移植性**:rutis-agent 以 `path = "../../../rutui/..."` 引用
+  仓库外兄弟 checkout rutui。CI 无此目录必然失败 → ci.yml 增加 checkout rutui
+  到 `../rutui` 步骤(模拟验证:cargo check --workspace 通过)。
+- **crates.io 版本陈旧**:rutis/rutis-agent/rutis-cli 在 crates.io 是 0.1.0 旧版
+  (rutis-agent 0.1.0 无 rutui 依赖,是重写前版本)。README 声称的
+  `cargo install rutis-cli` 装的是旧版 → 已更新三处文档(README /
+  cli README / release.yml notes)澄清:最新走 GitHub Releases 或源码构建。
+- **rutui 发布前置**:要把最新 TUI 版发布到 crates.io,需先发布 rutui-*
+  (git workspace 子 crate,Cargo git 依赖不支持;需 rutui 拆独立 crate 或
+  发布到 crates.io)。留给下一代(需 crates.io token)。
