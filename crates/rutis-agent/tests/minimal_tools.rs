@@ -446,6 +446,9 @@ fn persona_carries_essential_self_evolution_clauses() {
     // 工作纪律:及时 commit,防止工作堆积在未提交状态
     assert!(persona.contains("及时 commit"), "{persona}");
     assert!(persona.contains("未提交"), "{persona}");
+    // 工作纪律:提交后推送远程,远程是跨实例交接通道
+    assert!(persona.contains("推送到远程"), "{persona}");
+    assert!(persona.contains("git push"), "{persona}");
     // 自我演进:plugin 方式 + 热更新 + 仓库信息皆参考
     assert!(persona.contains("plugin"), "{persona}");
     assert!(persona.contains("热更新"), "{persona}");
