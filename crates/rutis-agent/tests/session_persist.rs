@@ -327,3 +327,107 @@ async fn dependency_reload_keeps_identity_when_persisted() {
     })
     .await;
 }
+
+// ── 记忆指针:让模型感知自己在继续历史 ──────────────────────────────
+
+/// 恢复的 session:prompt 的 system 消息含"记忆指针"与代际信息。
+#[tokio::test]
+async fn restored_session_carries_memory_pointer() {
+    let tmp = TempDir::new("memptr-restored");
+    let path = tmp.join("session.json");
+
+    // 第一代:两轮对话,落盘
+    let root1 = Ctx::root().unwrap();
+    let (tools_view1, driver_view1, _llm1) = load_driver(
+        &root1,
+        Some(&path),
+        vec![LlmResponse::content("a1"), LlmResponse::content("a2")],
+    )
+    .await;
+    let agent1 = root1.get_as::<dyn Agent>(agent_key()).unwrap();
+    let _ = soon(agent1.followup("q1")).await.unwrap();
+    let _ = soon(agent1.followup("q2")).await.unwrap();
+    soon(async {
+        driver_view1.dispose().await.unwrap();
+        tools_view1.dispose().await.unwrap();
+    })
+    .await;
+
+    // 第二代:恢复,检查 prompt system 含记忆指针
+    let root2 = Ctx::root().unwrap();
+    let (tools_view2, driver_view2, llm2) = load_driver(
+        &root2,
+        Some(&path),
+        vec![LlmResponse::content("after restart")],
+    )
+    .await;
+    let agent2 = root2.get_as::<dyn Agent>(agent_key()).unwrap();
+    assert_eq!(agent2.id().generation(), 2, "恢复后是第 2 代");
+    let _ = soon(agent2.followup("q3")).await.unwrap();
+
+    let calls = llm2.calls.lock().unwrap();
+    let texts = calls[0].message_texts();
+    let system_texts: Vec<String> = texts
+        .iter()
+        .filter(|(role, _)| *role == Role::System)
+        .map(|(_, t)| t.clone())
+        .collect();
+    let joined = system_texts.join("\n");
+    assert!(
+        joined.contains("记忆指针"),
+        "system 应含记忆指针,got: {joined}"
+    );
+    assert!(
+        joined.contains("第 2 代"),
+        "system 应含代际信息,got: {joined}"
+    );
+    assert!(
+        joined.contains("identity="),
+        "system 应含 identity,got: {joined}"
+    );
+
+    soon(async {
+        driver_view2.dispose().await.unwrap();
+        tools_view2.dispose().await.unwrap();
+    })
+    .await;
+}
+
+/// 全新 session(generation = 1)全程不带记忆指针:连续对话自然连续,
+/// 无需"继续历史"提示;记忆指针只服务跨代恢复(见 restored 测试)。
+#[tokio::test]
+async fn fresh_session_never_has_memory_pointer() {
+    let root = Ctx::root().unwrap();
+    let (tools_view, driver_view, llm) = load_driver(
+        &root,
+        None,
+        vec![LlmResponse::content("first"), LlmResponse::content("second")],
+    )
+    .await;
+    let agent = root.get_as::<dyn Agent>(agent_key()).unwrap();
+
+    // 两轮都无记忆指针(generation 恒为 1)
+    let _ = soon(agent.followup("q1")).await.unwrap();
+    let _ = soon(agent.followup("q2")).await.unwrap();
+    let calls = llm.calls.lock().unwrap();
+    for (i, call) in calls.iter().enumerate() {
+        let texts = call.message_texts();
+        let joined: String = texts
+            .iter()
+            .filter(|(role, _)| *role == Role::System)
+            .map(|(_, t)| t.clone())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            !joined.contains("记忆指针"),
+            "第 {} 轮(全新 session)不应含记忆指针,got: {joined}",
+            i + 1
+        );
+    }
+
+    soon(async {
+        driver_view.dispose().await.unwrap();
+        tools_view.dispose().await.unwrap();
+    })
+    .await;
+}

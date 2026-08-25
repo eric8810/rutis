@@ -290,9 +290,35 @@ impl AgentDriver {
             step += 1;
 
             // 思考:从 session 取全量 history(persona 经 instructions 前置)
+            //
+            // 记忆指针:恢复的 session(generation > 1 或已有历史)在 system
+            // prompt 尾部附加一段显式说明,让模型"感知"自己在继续一段历史
+            // 对话而非全新会话——历史在输入里但模型不自动引用,这是
+            // session 恢复"机制生效、认知不生效"的根因(见
+            // docs/work/lesson-confabulation-2026-08-25.md)。
+            let system = {
+                let session = self.session.lock().unwrap();
+                // 仅恢复的 session(generation > 1,跨进程/代际)附加记忆指针:
+                // 模型需要被明确告知自己在继续一段历史;全新 session 的
+                // 连续对话(generation = 1)自然连续,无需提示。
+                if session.id().generation() > 1 {
+                    let mut base = self.system_prompt.clone().unwrap_or_default();
+                    let gen = session.id().generation();
+                    base.push_str(&format!(
+                        "\n\n# 记忆指针\n\n\
+                         你正在继续一段历史对话(第 {gen} 代,identity={})。\
+                         以上是之前的完整消息,视为你的记忆。\
+                         回答时引用它,不要重新询问已经问过/答过的事,不要假装失忆。",
+                        session.id().identity()
+                    ));
+                    Some(base)
+                } else {
+                    self.system_prompt.clone()
+                }
+            };
             let prompt = convert_to_language_model_prompt(
                 self.session.lock().unwrap().messages(),
-                self.system_prompt.as_deref(),
+                system.as_deref(),
             );
             let tools = self.tools.schemas();
 
