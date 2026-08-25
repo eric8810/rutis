@@ -88,6 +88,9 @@ pub trait Agent: Send + Sync + 'static {
     fn followup<'a>(&'a self, input: &'a str) -> BoxFuture<'a, Result<String, AgentError>>;
     /// 中断当前 turn;session(history)保留,下次 followup 继续。
     fn cancel(&self);
+    /// 压缩 session 记忆:保存摘要,裁剪 messages 到最近 `keep` 条。
+    /// 返回 (压缩前消息数, 压缩后消息数)。供 `self_compact` 工具调用。
+    fn compact(&self, summary: String, keep: usize) -> (usize, usize);
 }
 
 /// session 只读快照(session 由 driver 独占,接口层只能给拷贝)。
@@ -95,13 +98,15 @@ pub trait Agent: Send + Sync + 'static {
 pub struct SessionSnapshot {
     id: SessionId,
     messages: Vec<ModelMessage>,
+    summary: Option<String>,
 }
 
 impl SessionSnapshot {
-    pub(crate) fn new(id: SessionId, messages: &[ModelMessage]) -> Self {
+    pub(crate) fn new(id: SessionId, messages: &[ModelMessage], summary: Option<String>) -> Self {
         Self {
             id,
             messages: messages.to_vec(),
+            summary,
         }
     }
 
@@ -113,6 +118,11 @@ impl SessionSnapshot {
         &self.messages
     }
 
+    /// 记忆摘要(长会话压缩后);None = 无摘要。
+    pub fn summary(&self) -> Option<&str> {
+        self.summary.as_deref()
+    }
+
     /// 快照落盘(供 `self_persist` 工具经 `Agent::session()` 组合调用;
     /// 不新增 `Agent` trait 方法)。原子写,错误上抛。
     pub fn persist(&self, path: &Path) -> Result<(), String> {
@@ -121,6 +131,7 @@ impl SessionSnapshot {
             id: self.id.identity(),
             generation: self.id.generation(),
             messages: self.messages.clone(),
+            summary: self.summary.clone(),
             saved_at_ms: crate::session::now_ms(),
         };
         let json = serde_json::to_string_pretty(&file)

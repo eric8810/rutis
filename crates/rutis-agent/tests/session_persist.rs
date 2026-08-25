@@ -431,3 +431,116 @@ async fn fresh_session_never_has_memory_pointer() {
     })
     .await;
 }
+
+// ── 记忆压缩(compact)───────────────────────────────────────────────
+
+/// Session::compact:保存摘要、裁剪消息、持久化后恢复摘要仍在。
+#[test]
+fn session_compact_trims_and_keeps_summary() {
+    let tmp = TempDir::new("compact");
+    let path = PathBuf::from(tmp.join("session.json"));
+
+    let mut s = Session::new();
+    for i in 0..10 {
+        s.push(ModelMessage::user(format!("q{i}")));
+        s.push(ModelMessage {
+            role: Role::Assistant,
+            content: MessageContent::Text(format!("a{i}")),
+        });
+    }
+    assert_eq!(s.messages().len(), 20);
+
+    let (before, after) = s.compact("early chat summary".to_string(), 4);
+    assert_eq!(before, 20);
+    assert_eq!(after, 4, "裁剪到最近 4 条");
+    assert_eq!(s.summary(), Some("early chat summary"));
+    // 保留的是最近 4 条(q8/a8/q9/a9)
+    let texts: Vec<String> = s
+        .messages()
+        .iter()
+        .map(|m| match &m.content {
+            MessageContent::Text(t) => t.clone(),
+            _ => String::new(),
+        })
+        .collect();
+    assert_eq!(texts, vec!["q8", "a8", "q9", "a9"]);
+
+    s.persist(&path).unwrap();
+    let r = Session::restore(&path);
+    assert_eq!(r.summary(), Some("early chat summary"), "恢复后摘要保留");
+    assert_eq!(r.messages().len(), 4);
+}
+
+/// 旧 session 文件(无 summary 字段)兼容加载:serde default → None。
+#[test]
+fn legacy_session_file_without_summary_loads() {
+    let tmp = TempDir::new("legacy-summary");
+    let path = PathBuf::from(tmp.join("session.json"));
+    std::fs::write(
+        &path,
+        r#"{"version":1,"id":7,"generation":2,"messages":[{"role":"user","content":"hi"}],"saved_at_ms":1}"#,
+    )
+    .unwrap();
+    let s = Session::restore(&path);
+    assert_eq!(s.summary(), None, "旧文件无 summary → None");
+    assert_eq!(s.messages().len(), 1);
+}
+
+/// driver 集成:compact 后,后续 prompt 的 system 含"记忆摘要"。
+#[tokio::test]
+async fn compacted_session_injects_summary_into_prompt() {
+    let root = Ctx::root().unwrap();
+    let (tools_view, driver_view, llm) = load_driver(
+        &root,
+        None,
+        vec![
+            LlmResponse::content("a1"),
+            LlmResponse::content("a2"),
+            LlmResponse::content("a3"),
+        ],
+    )
+    .await;
+    let agent = root.get_as::<dyn Agent>(agent_key()).unwrap();
+
+    let _ = soon(agent.followup("q1")).await.unwrap();
+    let _ = soon(agent.followup("q2")).await.unwrap();
+    // 压缩:摘要 + 保留 2 条
+    let (before, after) = agent.compact("first two turns summary".to_string(), 2);
+    assert!(before > after);
+
+    let _ = soon(agent.followup("q3")).await.unwrap();
+    let calls = llm.calls.lock().unwrap();
+    let texts = calls[2].message_texts();
+    let joined: String = texts
+        .iter()
+        .filter(|(role, _)| *role == Role::System)
+        .map(|(_, t)| t.clone())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        joined.contains("记忆摘要"),
+        "压缩后 system 应含记忆摘要,got: {joined}"
+    );
+    assert!(
+        joined.contains("first two turns summary"),
+        "摘要内容应注入,got: {joined}"
+    );
+    // 历史被裁剪:q1/q2 不在保留区(但摘要提及)
+    let snapshot = agent.session();
+    let msg_texts: Vec<String> = snapshot
+        .messages()
+        .iter()
+        .map(|m| match &m.content {
+            MessageContent::Text(t) => t.clone(),
+            _ => String::new(),
+        })
+        .collect();
+    assert!(!msg_texts.contains(&"q1".to_string()), "q1 被裁剪");
+    assert!(msg_texts.contains(&"q2".to_string()), "q2 保留(最近)");
+
+    soon(async {
+        driver_view.dispose().await.unwrap();
+        tools_view.dispose().await.unwrap();
+    })
+    .await;
+}

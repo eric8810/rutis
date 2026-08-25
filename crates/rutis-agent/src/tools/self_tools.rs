@@ -91,6 +91,7 @@ pub fn self_tools(ctx: Ctx) -> Vec<ToolDef> {
     vec![
         self_status(ctx.clone()),
         self_persist(ctx.clone()),
+        self_compact(ctx.clone()),
         self_build(ctx.clone()),
         self_check(ctx.clone()),
         self_reload(ctx),
@@ -176,6 +177,49 @@ pub fn self_persist(ctx: Ctx) -> ToolDef {
                     snapshot.id().generation(),
                     snapshot.messages().len(),
                     path.display()
+                )))
+            }
+        },
+    )
+}
+
+// ── self_compact ────────────────────────────────────────────────────
+
+/// `self_compact`:压缩长会话记忆——保存摘要,裁剪 messages 到最近
+/// `keep` 条(默认 20)。被裁剪消息由 `summary` 替代,后续 prompt 经
+/// system 前置注入(`# 记忆摘要`),长会话不退化。
+/// 参数:`summary`(早期对话摘要文本,由模型生成)、`keep`(保留最近条数)。
+pub fn self_compact(ctx: Ctx) -> ToolDef {
+    ToolDef::new(
+        "self_compact",
+        "Compact the session memory: summarize early messages and trim the history to the most recent N. Pass a concise summary of what happened before the kept messages. Keeps long sessions from degrading.",
+        json!({
+            "type": "object",
+            "properties": {
+                "summary": {
+                    "type": "string",
+                    "description": "Concise summary of the early conversation being trimmed"
+                },
+                "keep": {
+                    "type": "integer",
+                    "description": "Number of most recent messages to keep (default 20)"
+                }
+            },
+            "required": ["summary"]
+        }),
+        move |args: Value| {
+            let ctx = ctx.clone();
+            async move {
+                let summary = args["summary"]
+                    .as_str()
+                    .ok_or_else(|| "error: summary is required".to_string())?
+                    .to_string();
+                let keep = args["keep"].as_u64().unwrap_or(20) as usize;
+                let agent = current_agent(&ctx)?;
+                let (before, after) = agent.compact(summary, keep);
+                Ok(Value::String(format!(
+                    "compacted session: messages {} -> {} (kept last {keep})",
+                    before, after
                 )))
             }
         },

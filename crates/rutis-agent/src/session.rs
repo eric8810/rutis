@@ -66,6 +66,10 @@ pub struct SessionFile {
     /// 分代(重启 +1)。
     pub generation: u32,
     pub messages: Vec<ModelMessage>,
+    /// 记忆摘要(可选):长会话压缩后,被裁剪消息的摘要。serde default
+    /// 保证旧文件(无该字段)兼容加载。
+    #[serde(default)]
+    pub summary: Option<String>,
     pub saved_at_ms: u64,
 }
 
@@ -81,6 +85,8 @@ const SESSION_FILE_VERSION: u32 = 1;
 pub struct Session {
     id: SessionId,
     messages: Vec<ModelMessage>,
+    /// 记忆摘要:长会话压缩后,被裁剪消息的摘要;None = 无摘要。
+    summary: Option<String>,
 }
 
 impl Session {
@@ -88,6 +94,7 @@ impl Session {
         Self {
             id: SessionId::next(),
             messages: Vec::new(),
+            summary: None,
         }
     }
 
@@ -113,6 +120,7 @@ impl Session {
         Ok(Some(Self {
             id: SessionId::restored(file.id, file.generation),
             messages: file.messages,
+            summary: file.summary,
         }))
     }
 
@@ -130,6 +138,23 @@ impl Session {
         &self.messages
     }
 
+    /// 记忆摘要(长会话压缩后);None = 无摘要。
+    pub fn summary(&self) -> Option<&str> {
+        self.summary.as_deref()
+    }
+
+    /// 压缩:保存摘要,裁剪 messages 到最近 `keep` 条。
+    /// 返回 (压缩前消息数, 压缩后消息数)。
+    pub fn compact(&mut self, summary: String, keep: usize) -> (usize, usize) {
+        let before = self.messages.len();
+        self.summary = Some(summary);
+        if self.messages.len() > keep {
+            let cut = self.messages.len() - keep;
+            self.messages.drain(..cut);
+        }
+        (before, self.messages.len())
+    }
+
     /// 原子落盘:写临时文件 + rename(同目录,避免跨设备)。
     /// 父目录不存在时自动创建(默认路径 `.rutis/session.json` 的
     /// `.rutis` 目录可能尚未存在)。
@@ -144,6 +169,7 @@ impl Session {
             id: self.id.identity(),
             generation: self.id.generation(),
             messages: self.messages.clone(),
+            summary: self.summary.clone(),
             saved_at_ms: now_ms(),
         };
         let json = serde_json::to_string_pretty(&file)

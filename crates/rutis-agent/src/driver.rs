@@ -298,11 +298,21 @@ impl AgentDriver {
             // docs/work/lesson-confabulation-2026-08-25.md)。
             let system = {
                 let session = self.session.lock().unwrap();
-                // 仅恢复的 session(generation > 1,跨进程/代际)附加记忆指针:
-                // 模型需要被明确告知自己在继续一段历史;全新 session 的
-                // 连续对话(generation = 1)自然连续,无需提示。
+                // 保持"无附加内容时传 None"的语义(不引入空 system 消息,
+                // 不破坏 MockReplayModel 等对 prompt 结构的断言)。
+                let mut base = self.system_prompt.clone().unwrap_or_default();
+                let mut has_extra = false;
+                // 1) 记忆摘要(长会话压缩后):前置到 system prompt,
+                //    替代被裁剪的历史,保持长会话不退化。
+                if let Some(summary) = session.summary() {
+                    base.push_str(&format!(
+                        "\n\n# 记忆摘要\n\n以下是你早期对话的摘要(原始消息已被压缩裁剪):\n{summary}\n"
+                    ));
+                    has_extra = true;
+                }
+                // 2) 记忆指针:仅恢复的 session(generation > 1,跨进程/代际)
+                //    附加,告知模型在继续历史;全新 session 自然连续,无需提示。
                 if session.id().generation() > 1 {
-                    let mut base = self.system_prompt.clone().unwrap_or_default();
                     let gen = session.id().generation();
                     base.push_str(&format!(
                         "\n\n# 记忆指针\n\n\
@@ -311,6 +321,9 @@ impl AgentDriver {
                          回答时引用它,不要重新询问已经问过/答过的事,不要假装失忆。",
                         session.id().identity()
                     ));
+                    has_extra = true;
+                }
+                if has_extra {
                     Some(base)
                 } else {
                     self.system_prompt.clone()
@@ -493,7 +506,21 @@ impl Agent for AgentDriver {
 
     fn session(&self) -> SessionSnapshot {
         let session = self.session.lock().unwrap();
-        SessionSnapshot::new(session.id(), session.messages())
+        SessionSnapshot::new(
+            session.id(),
+            session.messages(),
+            session.summary().map(str::to_owned),
+        )
+    }
+
+    fn compact(&self, summary: String, keep: usize) -> (usize, usize) {
+        let result = {
+            let mut session = self.session.lock().unwrap();
+            session.compact(summary, keep)
+        };
+        // 压缩后立即落盘(路径已配置时),让摘要跨代保留
+        self.persist_session();
+        result
     }
 
     fn cancel(&self) {

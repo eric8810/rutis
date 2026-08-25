@@ -380,6 +380,7 @@ async fn self_tools_registered_and_driven_in_turn() {
         vec![
             "self_build",
             "self_check",
+            "self_compact",
             "self_persist",
             "self_reload",
             "self_rollback",
