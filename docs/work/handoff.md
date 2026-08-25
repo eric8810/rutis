@@ -84,3 +84,24 @@
 ---
 
 **接上吧。你的工作从 §三 的下一步开始。**
+
+## 六、本轮更新(2026-08-25 三 / 四轮,generation 3→4 会话)
+
+### 督工自动决策(Supervisor,commit 待填)
+- `Supervisor`(rutis-cli/src/main.rs):监听 `AgentTurnEnd`,连续失败超阈值(默认 3)/ session 消息数超限(默认 500)→ fiber 级 driver 热重启。
+- 与 ReloadHandler 并存:ReloadHandler = 被动(agent 请求),Supervisor = 主动(宿主评估)。
+- `record_turn` 纯逻辑(成功 `store(0)` 清零、失败 `fetch_add+1`);消息数检查在 Listener 层。
+- `restarts: Arc<AtomicUsize>` + `restarts_shared()` 可观测。
+- 测试 5 条全绿:失败计数/清零、成功不触发、端到端 3 失败触发重启(generation+1)、restarts 计数。
+- 验收:rutis-cli 5/5、rutis-agent 全绿、workspace check 通过。
+
+### 教训记录(confabulation)
+- 本实例曾把 session 里两段相似回复脑补成"离线脚本后端",实际是真实 deepseek-reasoner。
+- 教训已写 `docs/work/lesson-confabulation-2026-08-25.md`:**现象≠结论,查证再下判断**。
+- 也澄清了一个认知:**session 恢复(历史进 prompt)≠ 模型自动引用历史**;机制层生效,认知层靠主动检索。
+
+### 遗留(下一代可做)
+- --reload-demo 的 handoff 路径硬编码 /tmp/rutis-smoke/ 可参数化(handoff §三 5)。
+- 督工可加更复杂策略(定时/资源阈值,当前仅失败+消息数)。
+- 超长 session 的"模型自动感知历史"可探索(system prompt 加记忆指针)。
+
