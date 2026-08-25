@@ -14,7 +14,7 @@ pub mod self_tools;
 use std::collections::HashMap;
 use std::future::Future;
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use aimux_core::options::Tool;
 use aimux_core::tool::{FunctionTool, ToolCall};
@@ -72,14 +72,14 @@ impl ToolDef {
 /// 工具注册表服务:统一注册、schema 汇入 prompt、按名执行。
 /// 真装配单元——由 [`ToolsPlugin`] 提供,fiber 管生命周期,可热替换。
 pub struct ToolRegistry {
-    tools: HashMap<String, ToolDef>,
+    tools: Mutex<HashMap<String, ToolDef>>,
     handle: tokio::runtime::Handle,
 }
 
 impl ToolRegistry {
     pub(crate) fn new(handle: tokio::runtime::Handle, defs: Vec<ToolDef>) -> Self {
         Self {
-            tools: defs.into_iter().map(|d| (d.tool.name.clone(), d)).collect(),
+            tools: Mutex::new(defs.into_iter().map(|d| (d.tool.name.clone(), d)).collect()),
             handle,
         }
     }
@@ -87,21 +87,29 @@ impl ToolRegistry {
     /// 每步交给模型的工具 schema(aimux `Tool`,直接进 `CallOptions.tools`)。
     pub fn schemas(&self) -> Vec<Tool> {
         self.tools
+            .lock()
+            .unwrap()
             .values()
             .map(|d| Tool::Function(d.tool.clone()))
             .collect()
     }
 
-    pub fn get(&self, name: &str) -> Option<&ToolDef> {
-        self.tools.get(name)
+    /// 运行时注册/替换工具(热加载):运行中的 agent 可现场加入新能力,
+    /// 后续 turn 的 schema 立即包含它。同名覆盖。
+    pub fn register(&self, def: ToolDef) {
+        self.tools.lock().unwrap().insert(def.tool.name.clone(), def);
+    }
+
+    pub fn get(&self, name: &str) -> Option<ToolDef> {
+        self.tools.lock().unwrap().get(name).cloned()
     }
 
     pub fn len(&self) -> usize {
-        self.tools.len()
+        self.tools.lock().unwrap().len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.tools.is_empty()
+        self.tools.lock().unwrap().is_empty()
     }
 
     /// 执行一次工具调用;失败转为模型可见的 `error: ...` 结果,不崩循环。
@@ -110,7 +118,7 @@ impl ToolRegistry {
     /// `cancel` 在工具执行期间生效(取消 → `error: cancelled` 回喂,
     /// 循环在下一边界以 `Stopped` 收尾)。
     pub async fn execute(&self, call: &ToolCall, cancel: &CancellationToken) -> ToolOutput {
-        let Some(def) = self.tools.get(&call.tool_name) else {
+        let Some(def) = self.tools.lock().unwrap().get(&call.tool_name).cloned() else {
             return ToolOutput::err(format!("error: unknown tool '{}'", call.tool_name));
         };
         let run = def.run.clone();

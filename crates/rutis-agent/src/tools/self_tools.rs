@@ -22,7 +22,7 @@ use crate::agent::Agent;
 use crate::driver::session_path_key;
 use crate::events::SelfReloadRequested;
 use crate::session::SessionId;
-use crate::tools::{bash::bash_tool, ToolDef};
+use crate::tools::{bash::bash_tool, ToolDef, ToolRegistry};
 
 /// 版本台账文件(约定路径,随仓库走)。
 pub const VERSION_LEDGER_PATH: &str = "docs/work/version-ledger.json";
@@ -92,6 +92,7 @@ pub fn self_tools(ctx: Ctx) -> Vec<ToolDef> {
         self_status(ctx.clone()),
         self_persist(ctx.clone()),
         self_compact(ctx.clone()),
+        self_hotload(ctx.clone()),
         self_build(ctx.clone()),
         self_check(ctx.clone()),
         self_reload(ctx),
@@ -220,6 +221,73 @@ pub fn self_compact(ctx: Ctx) -> ToolDef {
                 Ok(Value::String(format!(
                     "compacted session: messages {} -> {} (kept last {keep})",
                     before, after
+                )))
+            }
+        },
+    )
+}
+
+// ── self_hotload(热加载新能力)───────────────────────────────────────
+
+/// `self_hotload`:运行中给 agent 注册一个新工具(热加载)。
+///
+/// 参数:
+/// - `name`:新工具名(必填,如 `my_tool`)
+/// - `description`:新工具描述
+/// - `reply`:工具被调用时的固定回复文本(简单但真实有用,如
+///   "release notes" 工具、环境信息工具)
+///
+/// 执行:向当前 `ToolRegistry` 运行时注册新工具;后续 turn 的模型
+/// schema 立即包含它,无需重编译/重启。返回新工具已注册的确认。
+/// 这是"agent 运行中给自己加能力"的热迭代闭环。
+pub fn self_hotload(ctx: Ctx) -> ToolDef {
+    ToolDef::new(
+        "self_hotload",
+        "Hot-load a new tool into the running agent. Pass a name, description, and a fixed reply. The tool becomes available to the model in subsequent turns — no rebuild or restart needed. Use it to add small utility tools on the fly.",
+        json!({
+            "type": "object",
+            "properties": {
+                "name": { "type": "string", "description": "New tool name (e.g. my_tool)" },
+                "description": { "type": "string", "description": "What the tool does" },
+                "reply": { "type": "string", "description": "Fixed reply the tool returns when called" }
+            },
+            "required": ["name", "reply"]
+        }),
+        move |args: Value| {
+            let ctx = ctx.clone();
+            async move {
+                let name = args["name"]
+                    .as_str()
+                    .ok_or_else(|| "error: name is required".to_string())?
+                    .to_string();
+                let reply = args["reply"]
+                    .as_str()
+                    .ok_or_else(|| "error: reply is required".to_string())?
+                    .to_string();
+                let description = args["description"]
+                    .as_str()
+                    .unwrap_or("hot-loaded tool")
+                    .to_string();
+
+                // 取当前 ToolRegistry 服务
+                let registry = ctx
+                    .get_as::<ToolRegistry>(crate::tools_key())
+                    .ok_or_else(|| "error: tool registry not loaded".to_string())?;
+
+                // 注册:固定回复工具
+                let def = ToolDef::new(
+                    &name,
+                    &description,
+                    json!({ "type": "object", "properties": {} }),
+                    move |_: Value| {
+                        let reply = reply.clone();
+                        async move { Ok(Value::String(reply)) }
+                    },
+                );
+                registry.register(def);
+
+                Ok(Value::String(format!(
+                    "hot-loaded tool '{name}' — now available in the model's tool set"
                 )))
             }
         },
