@@ -1,5 +1,11 @@
 # 常规 CI:push / PR 自动跑全量测试 + 编译检查。
 # 防回归:任何改动(agent/cli/内核/桥)引入的失败在此显式变红。
+#
+# 依赖说明:rutis-agent 以 path 依赖引用仓库外兄弟 checkout rutui
+# (`crates/rutis-agent/../../../rutui`,解析为 $GITHUB_WORKSPACE/../rutui)。
+# CI 必须先 checkout rutui 到该位置才能构建。rutui-* 尚未发布 crates.io,
+# 发布前维持此安排(见 docs/design-rutui-rewrite-2026-08-23.md)。
+#
 # node e2e(rutis-cordis host_cordis)需要外部 checkout(DSH_ROOT /
 # MIN_CORDIS_ROOT),CI 环境没有,经 RUTIS_SKIP_NODE_E2E=1 跳过。
 
@@ -18,6 +24,14 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+
+      # rutis-agent path 依赖的外部 rutui checkout:放在 workspace 上级,
+      # 使 crates/rutis-agent/../../../rutui 可解析
+      - name: checkout rutui (path dependency)
+        uses: actions/checkout@v4
+        with:
+          repository: eric8810/rutui
+          path: ../rutui
 
       - name: install rust toolchain
         uses: dtolnay/rust-toolchain@stable
