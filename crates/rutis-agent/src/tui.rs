@@ -56,7 +56,8 @@ use crate::events::{
     AgentReasoning, AgentTextDelta, AgentToolCall, AgentToolResult, AgentTurnEnd,
 };
 
-/// TUI 前端插件:`injects = [agent]`,依赖 agent 服务(dual gating 之上再门控)。
+/// TUI 前端插件:apply 时读取 agent 服务(启动时门控),不声明依赖——
+/// driver fiber 热重启时 TUI 不级联驱逐,UI 保持运行(热重启意图)。
 pub struct TuiPlugin {
     inject_keys: Vec<TypeKey>,
     /// 启动时置顶的说明行(如后端类型提示,离线脚本示例用它自我标识)。
@@ -66,7 +67,7 @@ pub struct TuiPlugin {
 impl TuiPlugin {
     pub fn new() -> Self {
         Self {
-            inject_keys: vec![crate::agent_key()],
+            inject_keys: Vec::new(),
             intro: Vec::new(),
         }
     }
@@ -639,7 +640,8 @@ impl Plugin for TuiPlugin {
 
     fn apply<'a>(&'a self, ctx: &'a Ctx) -> BoxFuture<'a, Result<Effect, CordisError>> {
         Box::pin(async move {
-            let agent = ctx
+            // 启动门控:agent 服务未就绪则报错(不声明依赖,避免热重启时驱逐)
+            let _agent = ctx
                 .get_as::<dyn Agent>(crate::agent_key())
                 .ok_or_else(|| CordisError::InjectUnsatisfied(vec!["agent".to_string()]))?;
 
@@ -671,6 +673,9 @@ impl Plugin for TuiPlugin {
 
             let intro = self.intro.clone();
             let handle = ctx.handle().clone();
+            // 渲染线程持 ctx(同步 get 最新 agent 服务;driver 热重启后
+            // 重新 get 到新实例,不缓存旧 driver)
+            let thread_ctx = ctx.clone();
 
             // ── 渲染线程:持有非 Send 的 App + Terminal,跑同步循环 ──
             let render_thread = std::thread::Builder::new()
@@ -701,18 +706,24 @@ impl Plugin for TuiPlugin {
                                     match app.handle_key(key) {
                                         Some(HandleOutcome::Quit) => break Ok(()),
                                         Some(HandleOutcome::Cancel) => {
-                                            let agent = agent.clone();
-                                            handle.spawn(async move {
-                                                agent.cancel();
-                                            });
+                                            if let Some(agent) =
+                                                thread_ctx.get_as::<dyn Agent>(crate::agent_key())
+                                            {
+                                                handle.spawn(async move {
+                                                    agent.cancel();
+                                                });
+                                            }
                                         }
                                         Some(HandleOutcome::Submit(text)) => {
-                                            let agent = agent.clone();
-                                            handle.spawn(async move {
-                                                if let Err(e) = agent.followup(&text).await {
-                                                    eprintln!("turn failed: {e}");
-                                                }
-                                            });
+                                            if let Some(agent) =
+                                                thread_ctx.get_as::<dyn Agent>(crate::agent_key())
+                                            {
+                                                handle.spawn(async move {
+                                                    if let Err(e) = agent.followup(&text).await {
+                                                        eprintln!("turn failed: {e}");
+                                                    }
+                                                });
+                                            }
                                         }
                                         None => {}
                                     }

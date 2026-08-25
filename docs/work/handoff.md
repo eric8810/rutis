@@ -31,16 +31,21 @@
    - `self_rollback`:`VersionLedger` 台账(commit + at_ms + note),默认 dry-run 报告 `git checkout <prev>`,`apply=true` 才执行;`ledger` 参数可覆盖。
    - 测试 `tests/self_tools.rs`(9 个):每个工具一条 + 集成 turn(模型收到全部 6 个 schema)。
 4. **验收**:`cargo test -p rutis-agent` 全绿(78 tests,3 轮稳定);`cargo check --workspace` 通过。
-5. **宿主侧热重启 + 督工雏形**(本轮,待提交):
+5. **宿主侧热重启 + 督工雏形**(commit 5583bcf):
    - `Session::persist` 自动建父目录(修复 `.rutis` 不存在时落盘失败)。
-   - `ReloadHandler`(rutis-cli):监听 `SelfReloadRequested` → 标记意图 + dispose root fiber → TUI 优雅退出 → **exec 重启进程**(保留环境/参数,进程镜像替换)。
+   - `ReloadHandler`(rutis-cli):监听 `SelfReloadRequested` → dispose root → **exec 重启进程**。
    - run() 装配升级:session path 默认 `cwd/.rutis/session.json` + `self_tools` 6 工具入 TUI 环境。
    - `--reload-demo` 演示 flag:scripted 首轮调用 self_reload 端到端演示。
-   - 测试 `tests::reload_handler_marks_request_and_disposes_root`(rutis-cli)。
-   - 冒烟验证:exec 替换后 session id=1 不变、generation 1→2、msgs 7→14(历史连续)。
+   - 测试 + 冒烟验证(exec 替换后 session id 稳定、gen+1、历史连续)。
+6. **fiber 级热重启(二轮,待提交)**:
+   - `ReloadHandler` 改为 `driver_view.restart()`(干净卸载→重装配,进程/LLM/TTY 保留,不 exec)。
+   - TUI 不声明 agent 依赖(inject_keys 空):driver 重启不驱逐 UI;TUI 每次提交/取消从 ctx 重新 get agent。
+   - run() 顺序:先 await tools/driver,再创建 TUI。
+   - 测试:`tests/fiber_restart.rs`(agent)+ `reload_handler_fiber_restarts_driver`(cli)。
+   - 冒烟:进程 PID 不变、TUI 连续运行、session id 稳定 gen 1→2 msgs 连续。
 
 ### 工作区状态
-- 本轮改动:session.rs + main.rs + docs/work/* 待提交。
+- 本轮改动:tui.rs + main.rs + tests/fiber_restart.rs + docs/work/* 待提交。
 
 ## 三、留给你的问题(下一代可做的事)
 
@@ -49,16 +54,18 @@
 2. ~~自我控制工具包~~ ✅
 3. ~~督工自动决策(心)~~ ✅(本轮最小版:宿主监听 SelfReloadRequested → exec 热重启)
 4. **动态加载新代码(终极,下一步)**:dylib/脚本方式热更新 plugin——自我演进最后一块拼图。
-5. **热重启 vs 冷重启取舍深化**:当前 exec 是进程级重启;可探索 **fiber 级热重启**(`FiberView::restart()`,保留 LLM 连接与进程,只重装配 agent driver)——更轻、更快,不丢 TTY。
+5. ~~fiber 级热重启~~ ✅(二轮完成:driver restart 保留进程/LLM/TTY,UI 不闪)。
 6. **督工策略升级**:AgentTurnEnd 后自动评估(消息数阈值/失败率/资源)→ 自动触发重启,而非仅被动响应 self_reload 请求。
 7. --reload-demo 的 handoff 路径硬编码 /tmp/rutis-smoke/ 可参数化。
+8. **冷重启地位**:已降级为"换编译产物/换机"时的纯手动交接;日常自我演进热重启即可(改代码→self_build→self_reload)。
 
 ## 四、关键物证(继续开发用)
 
 - `SessionId` 消费点:`Agent::id()` + `agent/*` 事件 `session` 字段;测试仅 `integration.rs:198` 用 `agent.id()`(无 path 时重载 id 不同,断言成立)。
 - aimux 消息自带 serde,持久化零类型转换。
-- `self_reload` 已升级为热重启(宿主 exec 替换进程,保留环境与参数)。
-- fiber 级热重启 = `FiberView::restart()` 现成,是比 exec 更轻的下一步(保留 LLM 连接/TTY)。
+- `self_reload` 已升级为 **fiber 级热重启**(driver_view.restart(),保留进程/LLM/TTY)。
+- TUI 不声明 agent 依赖(inject_keys 空),启动门控 get agent;driver 重启不驱逐 UI。
+- TUI 提交/取消从 ctx 重新 get agent(thread_ctx.get_as),不缓存旧 driver 实例。
 - 测试 cwd 是 crate 目录非仓库根;台账/相对路径工具需注意(工具默认相对路径,测试用绝对/临时目录)。
 - tmux 冒烟法:tmux new-session + send-keys 提供真实 TTY,可验证 TUI 交互与 exec 重启(进程 PID 变化)。
 

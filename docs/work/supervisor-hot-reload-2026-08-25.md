@@ -56,3 +56,30 @@
 - 督工可升级:AgentTurnEnd 后自动评估(如 session 消息数阈值/失败率)→ 自动触发 self_reload 类决策。
 - 热重启 vs 冷重启:当前 exec 是进程级;FiberView::restart() 的 fiber 级热重启(不 exec)可探索——保留 LLM 连接,只重装配 agent driver。
 - --reload-demo 的 handoff 路径硬编码 /tmp/rutis-smoke/ 可参数化。
+
+
+## 进展(2026-08-25 二轮):exec → fiber 级热重启
+
+### 问题
+上一轮 exec 版:进程级重启,每次 self_reload 重建整个进程(丢 LLM 连接)。
+
+### 改进
+1. **ReloadHandler 改为 fiber 级**:收到 SelfReloadRequested → 短暂延迟(300ms,让工具结果回喂/turn 收尾)→ `driver_view.restart()`(干净卸载→重装配,apply 内 Session::restore)。
+   - 进程保留(不 exec)、LLM 连接保留、TTY 保留。
+2. **TUI 不声明 agent 依赖**(inject_keys 空):driver 重启不驱逐 TUI,UI 保持运行。
+   - TUI apply 仍做启动门控(get agent,失败报 InjectUnsatisfied)。
+   - TUI 每次提交/取消从 ctx 重新 get 最新 agent(不缓存旧 driver)——driver 重启后新实例被使用。
+   - run() 顺序调整:先 await tools/driver,再创建 TUI(driver 就绪后 TUI 门控必过)。
+3. **测试**:
+   - `crates/rutis-agent/tests/fiber_restart.rs`:driver restart 后 session 恢复(identity 稳定、gen+1、历史连续)。
+   - `rutis-cli tests::reload_handler_fiber_restarts_driver`:事件→restart→generation 前进、新 agent 实例、session 连续。
+4. **冒烟验证(--scripted --reload-demo)**:
+   - PID 不变(进程保留,非 exec)
+   - TUI 保持运行(未退出到 shell)
+   - reload 轮完整执行(300ms 延迟后无 Turn failed)
+   - session:id=1 不变、gen 1→2、msgs 连续
+   - 重启后下一轮正常交互
+
+### 关键决策
+- 300ms 延迟解决"重启取消进行中 turn"的噪音;更严格可用 AgentTurnEnd 事件同步(未做,够用)。
+- TUI 从依赖门控改为启动门控:牺牲"agent 未就绪不启动"的强保证,换取热重启时 UI 不闪。

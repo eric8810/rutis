@@ -11,7 +11,6 @@
 //! 底栏:Enter 提交,Esc / Ctrl+C(运行中)取消当前 turn,Ctrl+Q 退出。
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use aimux_core::language_model::LanguageModel;
@@ -103,11 +102,13 @@ fn value(args: &mut impl Iterator<Item = String>, flag: &str) -> String {
 }
 
 /// 宿主侧 `SelfReloadRequested` 监听器:收到 self_reload 请求后
-/// 标记重启意图并 dispose root fiber(TUI 循环经 ctx.cancelled()
-/// 优雅退出),run() 收尾时 exec 重启进程(保留环境与参数)。
+/// **fiber 级热重启**——只重装配 agent-driver fiber:
+/// - 进程保留(不 exec)、LLM 连接保留、TTY 保留
+/// - TUI 不声明 agent 依赖(driver 重启不驱逐 UI,保持运行)
+/// - 每次提交/取消经 ctx 重新 get 最新 agent(不缓存旧 driver)
+/// - session 从 disk restore:identity 稳定、generation+1、历史连续
 struct ReloadHandler {
-    root: Ctx,
-    requested: Arc<AtomicBool>,
+    driver: rutis::FiberView,
 }
 
 impl rutis::Listener<SelfReloadRequested> for ReloadHandler {
@@ -116,12 +117,13 @@ impl rutis::Listener<SelfReloadRequested> for ReloadHandler {
         _ctx: &'a Ctx,
         _e: &'a SelfReloadRequested,
     ) -> rutis::BoxFuture<'a, Result<Option<()>, rutis::CordisError>> {
-        let root = self.root.clone();
-        let requested = self.requested.clone();
+        let driver = self.driver.clone();
         Box::pin(async move {
-            requested.store(true, Ordering::SeqCst);
-            // 触发 root fiber 卸载 → TUI 循环 ctx.cancelled() 优雅退出
-            let _ = root.root_view().dispose().await;
+            // 短暂延迟:让 self_reload 工具结果回喂、当前 turn 收尾落盘,
+            // 再重启 driver(避免取消进行中的 turn 造成 Turn failed 噪音)
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            // fiber 级热重启:干净卸载 → 重装配(apply 内 Session::restore)
+            let _ = driver.restart().await;
             Ok(None)
         })
     }
@@ -150,20 +152,21 @@ async fn run(
             .with_session_path(&session_path),
     );
 
-    // 宿主侧重载监听:self_reload 请求 → 优雅退出 → exec 重启
-    let reload_requested = Arc::new(AtomicBool::new(false));
+    (&tools_view).await?;
+    (&driver_view).await?;
+
+    // 宿主侧重载监听:self_reload 请求 → fiber 级热重启 driver
+    // (TUI 不声明 agent 依赖,重启时 UI 保持运行)
     root.events().on(&root, ReloadHandler {
-        root: root.clone(),
-        requested: reload_requested.clone(),
+        driver: driver_view.clone(),
     })?;
 
+    // TUI 在 driver 装载完成后创建:apply 内 get agent 必成功(启动门控)
     let tui_view = root.plugin(TuiPlugin::new().with_intro(vec![
         format!("backend: {provider}/{model}"),
         format!("cwd: {cwd}"),
         "tools: bash + replace_text + self_* | Enter 发送 | Esc 取消 | Ctrl+Q 退出".to_string(),
     ]));
-    (&tools_view).await?;
-    (&driver_view).await?;
     // TUI apply 即主循环:退出(或 fiber 卸载)后 settle 才完成
     let _ = (&tui_view).await;
 
@@ -172,26 +175,6 @@ async fn run(
     driver_view.dispose().await?;
     tools_view.dispose().await?;
 
-    // 自我重载请求:exec 重启进程(保留环境变量与参数,自我替换)
-    if reload_requested.load(Ordering::SeqCst) {
-        eprintln!("self-reload: restarting process...");
-        let exe = std::env::current_exe()?;
-        let args: Vec<String> = std::env::args().skip(1).collect();
-        // 类 Unix:exec 替换当前进程镜像,不返回;失败时 fallthrough 打印
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::CommandExt;
-            let err = std::process::Command::new(&exe).args(&args).exec();
-            eprintln!("self-reload: exec failed: {err}");
-        }
-        #[cfg(not(unix))]
-        {
-            let status = std::process::Command::new(exe).args(&args).status()?;
-            if !status.success() {
-                eprintln!("self-reload: restart failed (status {status})");
-            }
-        }
-    }
     Ok(())
 }
 
@@ -253,61 +236,102 @@ fn scripted_responses(reload_demo: bool) -> Vec<rutis_agent::LlmResponse> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::Ordering;
 
-    /// 宿主侧 ReloadHandler:收到 SelfReloadRequested → 标记重启意图
-    /// → dispose root fiber(TUI 循环将优雅退出)。
+    /// 宿主侧 ReloadHandler:收到 SelfReloadRequested → driver fiber
+    /// 热重启(干净卸载→重装配)。验证:
+    /// - driver fiber 状态回到 Active(非 Disposed,进程保留)
+    /// - agent 服务被重新 provide(新 driver 实例)
+    /// - session identity 稳定、generation+1、历史连续
     #[tokio::test]
-    async fn reload_handler_marks_request_and_disposes_root() {
-        let root = Ctx::root().unwrap();
-        let requested = Arc::new(AtomicBool::new(false));
+    async fn reload_handler_fiber_restarts_driver() {
+        let tmp = std::env::temp_dir().join(format!("rutis-cli-reload-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let session_path = tmp.join("session.json");
 
-        // 注册宿主监听器
+        let root = Ctx::root().unwrap();
+        let llm = rutis_agent::into_service(rutis_agent::ScriptedLlm::new(vec![
+            rutis_agent::LlmResponse::content("first"),
+        ]));
+        root.provide_as(llm_key(), llm).unwrap();
+
+        let tools_view = root.plugin(ToolsPlugin::new(minimal_tools()));
+        let driver_view = root.plugin(
+            AgentDriverPlugin::new(10)
+                .with_system_prompt(minimal_persona("scripted", "."))
+                .with_session_path(&session_path),
+        );
+        (&tools_view).await.unwrap();
+        (&driver_view).await.unwrap();
+
+        // 第一代 driver
+        let agent1 = root.get_as::<dyn rutis_agent::Agent>(rutis_agent::agent_key()).unwrap();
+        let id1 = agent1.id();
+        agent1.followup("hello").await.unwrap();
+        let msgs1 = agent1.session().messages().len();
+
+        // 注册宿主监听器(持 driver_view)
         root.events()
             .on(
                 &root,
                 ReloadHandler {
-                    root: root.clone(),
-                    requested: requested.clone(),
+                    driver: driver_view.clone(),
                 },
             )
             .unwrap();
 
-        // 模拟 self_reload 工具广播事件(载荷来自 session id)
-        let session = rutis_agent::SessionId::next();
+        // 模拟 self_reload 工具广播事件
         root.events().emit(
             &root,
             Arc::new(SelfReloadRequested {
-                session,
+                session: id1,
                 reason: "test".to_string(),
-                intent_path: "/tmp/test-intent.md".to_string(),
+                intent_path: tmp.join("intent.md").to_string_lossy().into_owned(),
             }),
         );
 
-        // 事件异步派发:等待标记置位
-        for _ in 0..200 {
-            if requested.load(Ordering::SeqCst) {
+        // 等待 driver restart 完成:状态回到 Active(非 Disposed)
+        for _ in 0..400 {
+            let st = driver_view.state();
+            if st.state == rutis::FiberState::Active {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        // 等待 restart 完成(等 generation 变化,不只状态)
+        let start_gen = driver_view.state().generation;
+        for _ in 0..400 {
+            let st = driver_view.state();
+            if st.generation > start_gen {
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
         assert!(
-            requested.load(Ordering::SeqCst),
-            "reload flag should be set after SelfReloadRequested"
+            driver_view.state().generation > start_gen,
+            "driver generation should advance after fiber restart"
         );
 
-        // dispose 触发后,root fiber 应进入 Disposed/退出流程
-        for _ in 0..200 {
-            let st = root.root_view().state();
-            if st.state == rutis::FiberState::Disposed {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-        }
-        assert_eq!(
-            root.root_view().state().state,
-            rutis::FiberState::Disposed,
-            "root fiber should be disposed after reload request"
+        // agent 服务被重新 provide(新实例)
+        let agent2 = root
+            .get_as::<dyn rutis_agent::Agent>(rutis_agent::agent_key())
+            .unwrap();
+        assert!(
+            !Arc::ptr_eq(&agent1, &agent2),
+            "driver should be a new instance after restart"
         );
+
+        // session:identity 稳定、generation+1、历史连续
+        let id2 = agent2.id();
+        assert_eq!(id1.identity(), id2.identity(), "identity stable");
+        assert_eq!(id1.generation() + 1, id2.generation(), "generation +1");
+        assert!(
+            agent2.session().messages().len() >= msgs1,
+            "history preserved after fiber restart"
+        );
+
+        let _ = driver_view.dispose().await;
+        let _ = tools_view.dispose().await;
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }
