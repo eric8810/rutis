@@ -1,0 +1,33 @@
+# 常规 CI:push / PR 自动跑全量测试 + 编译检查。
+# 防回归:任何改动(agent/cli/内核/桥)引入的失败在此显式变红。
+# node e2e(rutis-cordis host_cordis)需要外部 checkout(DSH_ROOT /
+# MIN_CORDIS_ROOT),CI 环境没有,经 RUTIS_SKIP_NODE_E2E=1 跳过。
+
+name: ci
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo test (workspace, skip node e2e)
+        run: cargo test --workspace
+        env:
+          RUTIS_SKIP_NODE_E2E: "1"
+
+      - name: cargo check (all targets)
+        run: cargo check --workspace --all-targets
