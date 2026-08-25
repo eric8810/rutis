@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/rutis", "crates/rutis-agent", "crates/rutis-cli", "crates/rutis-cordis", "crates/rutis-dsh", "crates/aimux-llm"]
+members = ["crates/rutis", "crates/rutis-agent", "crates/rutis-cli", "crates/rutis-cordis", "crates/rutis-dsh", "crates/aimux-llm", "crates/rutis-hotplug-demo"]
 
 [workspace.package]
 edition = "2021"

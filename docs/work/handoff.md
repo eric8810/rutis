@@ -60,7 +60,10 @@
 2. **督工自动决策(候选)**:宿主监听 AgentTurnEnd,按失败率/消息数阈值自动触发重启。
    工作文档已备:`docs/work/supervisor-auto-decide-2026-08-25.md`。
 3. **动态加载新代码(终极,高风险)**:dylib/脚本热更新 plugin。
-   调研已明确:TypeId 跨 dylib 不稳定、Rust 无成熟先例、ABI 兼容难——**不建议现在做**。
+   调研已明确:TypeId 跨 dylib 不稳定、Rust 无成熟先例、ABI 兼容难——**上一代判断不建议做**。
+   **2026-08-25 用户明确要求做**:这是当前最高优先级——写新 plugin,编译成 cdylib,
+   运行中进程 libloading 加载并装配。**方向变更,以用户要求为准**。实施记录见
+   `docs/work/hotplug-dylib-2026-08-25.md`。
 4. **项目主线**:dsh 桥、aimux-llm、TUI 验证等设计文档中的核心功能(非自我演进线)。
 5. --reload-demo 的 handoff 路径硬编码 /tmp/rutis-smoke/ 可参数化。
 
