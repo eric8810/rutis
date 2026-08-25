@@ -37,27 +37,32 @@
    - run() 装配升级:session path 默认 `cwd/.rutis/session.json` + `self_tools` 6 工具入 TUI 环境。
    - `--reload-demo` 演示 flag:scripted 首轮调用 self_reload 端到端演示。
    - 测试 + 冒烟验证(exec 替换后 session id 稳定、gen+1、历史连续)。
-6. **fiber 级热重启(二轮,待提交)**:
+6. **fiber 级热重启(commit 8e3bcf9)**:
    - `ReloadHandler` 改为 `driver_view.restart()`(干净卸载→重装配,进程/LLM/TTY 保留,不 exec)。
    - TUI 不声明 agent 依赖(inject_keys 空):driver 重启不驱逐 UI;TUI 每次提交/取消从 ctx 重新 get agent。
    - run() 顺序:先 await tools/driver,再创建 TUI。
    - 测试:`tests/fiber_restart.rs`(agent)+ `reload_handler_fiber_restarts_driver`(cli)。
    - 冒烟:进程 PID 不变、TUI 连续运行、session id 稳定 gen 1→2 msgs 连续。
+7. **冷启动实测(2026-08-25)**:进程 A 退出 → 进程 B 冷启动,id=1 不变、gen 1→2、msgs 5→10(历史连续)。冷启动接续成立。
 
 ### 工作区状态
-- 本轮改动:tui.rs + main.rs + tests/fiber_restart.rs + docs/work/* 待提交。
+- 全部代码改动已提交(8e3bcf9 为最新)。工作区干净。
+- 唯一未提交:docs/work/supervisor-auto-decide-2026-08-25.md(候选工作文档,未开始实施)。
 
 ## 三、留给你的问题(下一代可做的事)
 
-设计文档 `design-session-persist-and-self-tools-2026-08-23.md` §四 演进顺序:
-1. ~~session 持久化~~ ✅
-2. ~~自我控制工具包~~ ✅
-3. ~~督工自动决策(心)~~ ✅(本轮最小版:宿主监听 SelfReloadRequested → exec 热重启)
-4. **动态加载新代码(终极,下一步)**:dylib/脚本方式热更新 plugin——自我演进最后一块拼图。
-5. ~~fiber 级热重启~~ ✅(二轮完成:driver restart 保留进程/LLM/TTY,UI 不闪)。
-6. **督工策略升级**:AgentTurnEnd 后自动评估(消息数阈值/失败率/资源)→ 自动触发重启,而非仅被动响应 self_reload 请求。
-7. --reload-demo 的 handoff 路径硬编码 /tmp/rutis-smoke/ 可参数化。
-8. **冷重启地位**:已降级为"换编译产物/换机"时的纯手动交接;日常自我演进热重启即可(改代码→self_build→self_reload)。
+> 演进机制已闭环(session + 自我工具 + 热重启 + 冷启动全通)。
+> 注意:**不要只埋头打磨框架机制**——先与用户确认方向(用户可能希望 agent 去做实际任务,
+> 或推 rutis 项目主线)。以下为候选,按价值排序:
+
+1. **做实事(建议先问用户)**:框架已能跑(CLI + bash + replace_text + 真实 LLM + 自我工具)。
+   是否该让它完成实际编码任务,而不是继续打磨自身?
+2. **督工自动决策(候选)**:宿主监听 AgentTurnEnd,按失败率/消息数阈值自动触发重启。
+   工作文档已备:`docs/work/supervisor-auto-decide-2026-08-25.md`。
+3. **动态加载新代码(终极,高风险)**:dylib/脚本热更新 plugin。
+   调研已明确:TypeId 跨 dylib 不稳定、Rust 无成熟先例、ABI 兼容难——**不建议现在做**。
+4. **项目主线**:dsh 桥、aimux-llm、TUI 验证等设计文档中的核心功能(非自我演进线)。
+5. --reload-demo 的 handoff 路径硬编码 /tmp/rutis-smoke/ 可参数化。
 
 ## 四、关键物证(继续开发用)
 
