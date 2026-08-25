@@ -323,6 +323,15 @@ impl AgentDriver {
                     ));
                     has_extra = true;
                 }
+                // 3) 待办/下一步:agent 中断后自动接续的工作指引。
+                //    重启恢复后模型第一眼就看到"该做什么",自动继续,
+                //    而不是问用户"我从哪开始"。
+                if let Some(todo) = session.todo() {
+                    base.push_str(&format!(
+                        "\n\n# 待办/下一步\n\n以下是你(上一代实例)未完成的工作,继续做:\n{todo}\n"
+                    ));
+                    has_extra = true;
+                }
                 if has_extra {
                     Some(base)
                 } else {
@@ -510,6 +519,7 @@ impl Agent for AgentDriver {
             session.id(),
             session.messages(),
             session.summary().map(str::to_owned),
+            session.todo().map(str::to_owned),
         )
     }
 
@@ -521,6 +531,15 @@ impl Agent for AgentDriver {
         // 压缩后立即落盘(路径已配置时),让摘要跨代保留
         self.persist_session();
         result
+    }
+
+    fn set_todo(&self, todo: String) {
+        {
+            let mut session = self.session.lock().unwrap();
+            session.set_todo(todo);
+        }
+        // 立即落盘:中断后恢复时待办可用
+        self.persist_session();
     }
 
     fn cancel(&self) {

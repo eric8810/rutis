@@ -30,6 +30,8 @@ unicode-width = "0.2"
 rutui-core = { path = "../../../rutui/rutui-core" }
 rutui-prompt = { path = "../../../rutui/rutui-prompt" }
 rutui-theme = { path = "../../../rutui/rutui-theme" }
+# 热插拔:运行中加载 cdylib 插件(自迭代闭环)
+libloading = "0.8"
 
 [dev-dependencies]
 aimux-providers = "0.3.0"

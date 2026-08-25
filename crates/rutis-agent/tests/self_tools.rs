@@ -378,6 +378,7 @@ async fn self_tools_registered_and_driven_in_turn() {
     assert_eq!(
         names,
         vec![
+            "hotplug_load",
             "self_build",
             "self_check",
             "self_compact",
@@ -386,6 +387,7 @@ async fn self_tools_registered_and_driven_in_turn() {
             "self_reload",
             "self_rollback",
             "self_status",
+            "self_todo",
         ],
         "{names:?}"
     );

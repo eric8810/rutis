@@ -8,6 +8,7 @@
 //! 装进本插件,不做 dsh 的中央工具服务 + 能力 seam 两层(设计 §三)。
 
 pub mod bash;
+pub mod hotplug;
 pub mod replace_text;
 pub mod self_tools;
 

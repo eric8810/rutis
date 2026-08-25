@@ -91,6 +91,8 @@ pub trait Agent: Send + Sync + 'static {
     /// 压缩 session 记忆:保存摘要,裁剪 messages 到最近 `keep` 条。
     /// 返回 (压缩前消息数, 压缩后消息数)。供 `self_compact` 工具调用。
     fn compact(&self, summary: String, keep: usize) -> (usize, usize);
+    /// 记录/更新待办(中断后自动接续的工作指引)。供 `self_todo` 工具调用。
+    fn set_todo(&self, todo: String);
 }
 
 /// session 只读快照(session 由 driver 独占,接口层只能给拷贝)。
@@ -99,14 +101,21 @@ pub struct SessionSnapshot {
     id: SessionId,
     messages: Vec<ModelMessage>,
     summary: Option<String>,
+    todo: Option<String>,
 }
 
 impl SessionSnapshot {
-    pub(crate) fn new(id: SessionId, messages: &[ModelMessage], summary: Option<String>) -> Self {
+    pub(crate) fn new(
+        id: SessionId,
+        messages: &[ModelMessage],
+        summary: Option<String>,
+        todo: Option<String>,
+    ) -> Self {
         Self {
             id,
             messages: messages.to_vec(),
             summary,
+            todo,
         }
     }
 
@@ -123,6 +132,11 @@ impl SessionSnapshot {
         self.summary.as_deref()
     }
 
+    /// 待办/下一步(中断后自动接续);None = 无待办。
+    pub fn todo(&self) -> Option<&str> {
+        self.todo.as_deref()
+    }
+
     /// 快照落盘(供 `self_persist` 工具经 `Agent::session()` 组合调用;
     /// 不新增 `Agent` trait 方法)。原子写,错误上抛。
     pub fn persist(&self, path: &Path) -> Result<(), String> {
@@ -132,6 +146,7 @@ impl SessionSnapshot {
             generation: self.id.generation(),
             messages: self.messages.clone(),
             summary: self.summary.clone(),
+            todo: self.todo.clone(),
             saved_at_ms: crate::session::now_ms(),
         };
         let json = serde_json::to_string_pretty(&file)

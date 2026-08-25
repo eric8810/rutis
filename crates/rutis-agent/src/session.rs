@@ -70,6 +70,10 @@ pub struct SessionFile {
     /// 保证旧文件(无该字段)兼容加载。
     #[serde(default)]
     pub summary: Option<String>,
+    /// 待办/下一步(可选):agent 中断后自动接续的工作指引。serde default
+    /// 兼容旧文件。
+    #[serde(default)]
+    pub todo: Option<String>,
     pub saved_at_ms: u64,
 }
 
@@ -87,6 +91,8 @@ pub struct Session {
     messages: Vec<ModelMessage>,
     /// 记忆摘要:长会话压缩后,被裁剪消息的摘要;None = 无摘要。
     summary: Option<String>,
+    /// 待办/下一步:中断后自动接续的工作指引;None = 无待办。
+    todo: Option<String>,
 }
 
 impl Session {
@@ -95,6 +101,7 @@ impl Session {
             id: SessionId::next(),
             messages: Vec::new(),
             summary: None,
+            todo: None,
         }
     }
 
@@ -121,6 +128,7 @@ impl Session {
             id: SessionId::restored(file.id, file.generation),
             messages: file.messages,
             summary: file.summary,
+            todo: file.todo,
         }))
     }
 
@@ -141,6 +149,16 @@ impl Session {
     /// 记忆摘要(长会话压缩后);None = 无摘要。
     pub fn summary(&self) -> Option<&str> {
         self.summary.as_deref()
+    }
+
+    /// 待办/下一步(中断后自动接续);None = 无待办。
+    pub fn todo(&self) -> Option<&str> {
+        self.todo.as_deref()
+    }
+
+    /// 设置/更新待办(agent 记录下一步工作)。
+    pub fn set_todo(&mut self, todo: String) {
+        self.todo = Some(todo);
     }
 
     /// 压缩:保存摘要,裁剪 messages 到最近 `keep` 条。
@@ -170,6 +188,7 @@ impl Session {
             generation: self.id.generation(),
             messages: self.messages.clone(),
             summary: self.summary.clone(),
+            todo: self.todo.clone(),
             saved_at_ms: now_ms(),
         };
         let json = serde_json::to_string_pretty(&file)

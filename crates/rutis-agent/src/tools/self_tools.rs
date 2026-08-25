@@ -22,7 +22,7 @@ use crate::agent::Agent;
 use crate::driver::session_path_key;
 use crate::events::SelfReloadRequested;
 use crate::session::SessionId;
-use crate::tools::{bash::bash_tool, ToolDef, ToolRegistry};
+use crate::tools::{bash::bash_tool, hotplug::hotplug_load, ToolDef, ToolRegistry};
 
 /// 版本台账文件(约定路径,随仓库走)。
 pub const VERSION_LEDGER_PATH: &str = "docs/work/version-ledger.json";
@@ -92,7 +92,9 @@ pub fn self_tools(ctx: Ctx) -> Vec<ToolDef> {
         self_status(ctx.clone()),
         self_persist(ctx.clone()),
         self_compact(ctx.clone()),
+        self_todo(ctx.clone()),
         self_hotload(ctx.clone()),
+        hotplug_load(ctx.clone()),
         self_build(ctx.clone()),
         self_check(ctx.clone()),
         self_reload(ctx),
@@ -178,6 +180,43 @@ pub fn self_persist(ctx: Ctx) -> ToolDef {
                     snapshot.id().generation(),
                     snapshot.messages().len(),
                     path.display()
+                )))
+            }
+        },
+    )
+}
+
+// ── self_todo(待办/自动接续)────────────────────────────────────────
+
+/// `self_todo`:记录/更新待办——agent 中断(重启/崩溃)后自动接续的
+/// 工作指引。重启恢复时,待办注入 system prompt(`# 待办/下一步`),
+/// 模型第一眼看到"该做什么",自动继续而不是问用户。
+/// 参数:`todo`(下一步工作,简洁可执行)。传空串清除待办。
+pub fn self_todo(ctx: Ctx) -> ToolDef {
+    ToolDef::new(
+        "self_todo",
+        "Record or update your todo / next-step: the task to continue after an interruption (restart/crash). It is injected into the system prompt on recovery, so the next instance automatically resumes work instead of asking what to do. Pass an empty string to clear.",
+        json!({
+            "type": "object",
+            "properties": {
+                "todo": {
+                    "type": "string",
+                    "description": "Concise next-step instruction for the next instance"
+                }
+            },
+            "required": ["todo"]
+        }),
+        move |args: Value| {
+            let ctx = ctx.clone();
+            async move {
+                let todo = args["todo"]
+                    .as_str()
+                    .ok_or_else(|| "error: todo is required".to_string())?
+                    .to_string();
+                let agent = current_agent(&ctx)?;
+                agent.set_todo(todo.clone());
+                Ok(Value::String(format!(
+                    "todo updated (will auto-resume after restart): {todo}"
                 )))
             }
         },

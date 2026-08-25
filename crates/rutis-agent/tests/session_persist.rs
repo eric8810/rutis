@@ -544,3 +544,139 @@ async fn compacted_session_injects_summary_into_prompt() {
     })
     .await;
 }
+
+// ── 待办/自动接续(todo)─────────────────────────────────────────────
+
+/// Session todo roundtrip:设置 → 持久化 → 恢复 → 待办仍在。
+#[test]
+fn session_todo_roundtrip() {
+    let tmp = TempDir::new("todo");
+    let path = PathBuf::from(tmp.join("session.json"));
+
+    let mut s = Session::new();
+    s.push(ModelMessage::user("q1"));
+    s.set_todo("finish the hotplug integration".to_string());
+    s.persist(&path).unwrap();
+
+    let r = Session::restore(&path);
+    assert_eq!(r.todo(), Some("finish the hotplug integration"));
+    assert_eq!(r.messages().len(), 1);
+}
+
+/// 旧 session 文件(无 todo 字段)兼容加载。
+#[test]
+fn legacy_session_file_without_todo_loads() {
+    let tmp = TempDir::new("legacy-todo");
+    let path = PathBuf::from(tmp.join("session.json"));
+    std::fs::write(
+        &path,
+        r#"{"version":1,"id":7,"generation":2,"messages":[{"role":"user","content":"hi"}],"saved_at_ms":1}"#,
+    )
+    .unwrap();
+    let s = Session::restore(&path);
+    assert_eq!(s.todo(), None, "旧文件无 todo → None");
+}
+
+/// driver 集成:设置待办后,后续 prompt 的 system 含"待办/下一步"。
+#[tokio::test]
+async fn todo_injected_into_prompt() {
+    let root = Ctx::root().unwrap();
+    let (tools_view, driver_view, llm) = load_driver(
+        &root,
+        None,
+        vec![LlmResponse::content("a1"), LlmResponse::content("a2")],
+    )
+    .await;
+    let agent = root.get_as::<dyn Agent>(agent_key()).unwrap();
+
+    // 第一轮(无待办):system 不含"待办"
+    let _ = soon(agent.followup("q1")).await.unwrap();
+    let calls = llm.calls.lock().unwrap();
+    let joined: String = calls[0]
+        .message_texts()
+        .iter()
+        .filter(|(r, _)| *r == Role::System)
+        .map(|(_, t)| t.clone())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(!joined.contains("待办"), "无待办时不应注入, got: {joined}");
+    drop(calls);
+
+    // 设置待办 → 第二轮 system 含"待办/下一步"
+    agent.set_todo("continue the dsh bridge work".to_string());
+    let _ = soon(agent.followup("q2")).await.unwrap();
+    let calls = llm.calls.lock().unwrap();
+    let joined: String = calls[1]
+        .message_texts()
+        .iter()
+        .filter(|(r, _)| *r == Role::System)
+        .map(|(_, t)| t.clone())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(joined.contains("待办"), "有待办时应注入, got: {joined}");
+    assert!(
+        joined.contains("continue the dsh bridge work"),
+        "待办内容应注入, got: {joined}"
+    );
+
+    soon(async {
+        driver_view.dispose().await.unwrap();
+        tools_view.dispose().await.unwrap();
+    })
+    .await;
+}
+
+/// 重启后待办保留并注入(自动接续核心):第一代设待办 → 第二代恢复 →
+/// prompt 含待办。
+#[tokio::test]
+async fn todo_survives_restart_and_injects() {
+    let tmp = TempDir::new("todo-restart");
+    let path = tmp.join("session.json");
+
+    // 第一代:一轮 + 设待办,落盘
+    let root1 = Ctx::root().unwrap();
+    let (tv1, dv1, _llm1) = load_driver(
+        &root1,
+        Some(&path),
+        vec![LlmResponse::content("a1")],
+    )
+    .await;
+    let agent1 = root1.get_as::<dyn Agent>(agent_key()).unwrap();
+    let _ = soon(agent1.followup("q1")).await.unwrap();
+    agent1.set_todo("finish the self-todo feature".to_string());
+    soon(async {
+        dv1.dispose().await.unwrap();
+        tv1.dispose().await.unwrap();
+    })
+    .await;
+
+    // 第二代:恢复 → 第一轮 prompt 含待办(自动接续)
+    let root2 = Ctx::root().unwrap();
+    let (tv2, dv2, llm2) = load_driver(
+        &root2,
+        Some(&path),
+        vec![LlmResponse::content("resumed")],
+    )
+    .await;
+    let agent2 = root2.get_as::<dyn Agent>(agent_key()).unwrap();
+    assert_eq!(agent2.session().todo(), Some("finish the self-todo feature"));
+    let _ = soon(agent2.followup("resume")).await.unwrap();
+    let calls = llm2.calls.lock().unwrap();
+    let joined: String = calls[0]
+        .message_texts()
+        .iter()
+        .filter(|(r, _)| *r == Role::System)
+        .map(|(_, t)| t.clone())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        joined.contains("finish the self-todo feature"),
+        "重启后待办应注入 prompt(自动接续), got: {joined}"
+    );
+
+    soon(async {
+        dv2.dispose().await.unwrap();
+        tv2.dispose().await.unwrap();
+    })
+    .await;
+}

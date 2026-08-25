@@ -83,10 +83,11 @@ pub use minimal::{minimal_persona, minimal_tools};
 pub use scripted::{into_service, tool_call, LlmResponse, ScriptedCall, ScriptedLlm};
 pub use session::{Session, SessionId};
 pub use tools::bash::bash_tool;
+pub use tools::hotplug::hotplug_load;
 pub use tools::replace_text::replace_text_tool;
 pub use tools::self_tools::{
-    self_build, self_check, self_persist, self_reload, self_rollback_tool, self_status, self_tools,
-    VersionLedger, VERSION_LEDGER_PATH,
+    self_build, self_check, self_compact, self_hotload, self_persist, self_reload,
+    self_rollback_tool, self_status, self_todo, self_tools, VersionLedger, VERSION_LEDGER_PATH,
 };
 pub use tools::{tools_key, ToolDef, ToolOutput, ToolRegistry, ToolsPlugin};
 pub use tui::TuiPlugin;
