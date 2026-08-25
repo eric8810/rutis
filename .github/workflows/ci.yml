@@ -3,8 +3,9 @@
 #
 # 依赖说明:rutis-agent 以 path 依赖引用仓库外兄弟 checkout rutui
 # (`crates/rutis-agent/../../../rutui`,解析为 $GITHUB_WORKSPACE/../rutui)。
-# CI 必须先 checkout rutui 到该位置才能构建。rutui-* 尚未发布 crates.io,
-# 发布前维持此安排(见 docs/design-rutui-rewrite-2026-08-23.md)。
+# actions/checkout 的 path 不允许逃逸 workspace 外,故先 checkout 到
+# workspace 内 `.rutui-checkout`,再 symlink 到预期位置。rutui-* 尚未发布
+# crates.io,发布前维持此安排(见 docs/design-rutui-rewrite-2026-08-23.md)。
 #
 # node e2e(rutis-cordis host_cordis)需要外部 checkout(DSH_ROOT /
 # MIN_CORDIS_ROOT),CI 环境没有,经 RUTIS_SKIP_NODE_E2E=1 跳过。
@@ -25,13 +26,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # rutis-agent path 依赖的外部 rutui checkout:放在 workspace 上级,
-      # 使 crates/rutis-agent/../../../rutui 可解析
+      # rutis-agent path 依赖的外部 rutui checkout
       - name: checkout rutui (path dependency)
         uses: actions/checkout@v4
         with:
           repository: eric8810/rutui
-          path: ../rutui
+          path: .rutui-checkout
+
+      # symlink 到 path 依赖解析位置(crates/rutis-agent/../../../rutui)
+      - name: symlink rutui to expected path
+        run: |
+          ln -s "$GITHUB_WORKSPACE/.rutui-checkout" "$GITHUB_WORKSPACE/../rutui"
+          ls -la "$GITHUB_WORKSPACE/../rutui" | head -3
 
       - name: install rust toolchain
         uses: dtolnay/rust-toolchain@stable
