@@ -10,7 +10,6 @@
 //! 工具集 = `bash` + `replace_text`(能改文件、能跑命令);交互见 TUI 界面
 //! 底栏:Enter 提交,Esc / Ctrl+C(运行中)取消当前 turn,Ctrl+Q 退出。
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use aimux_core::language_model::LanguageModel;
@@ -141,15 +140,14 @@ async fn run(
     let root = Ctx::root()?;
     root.provide_as(llm_key(), llm)?;
 
-    // session 持久化路径(默认 cwd/.rutis/session.json)+ 自我控制工具包
-    let session_path = PathBuf::from(&cwd).join(".rutis").join("session.json");
+    // session 持久化(默认 <cwd>/.rutis/session.json)+ 自我控制工具包
     let mut tools = self_tools(root.clone());
     tools.extend(minimal_tools());
     let tools_view = root.plugin(ToolsPlugin::new(tools));
     let driver_view = root.plugin(
         AgentDriverPlugin::new(10000)
             .with_system_prompt(minimal_persona(model, &cwd))
-            .with_session_path(&session_path),
+            .with_default_session_path(),
     );
 
     (&tools_view).await?;

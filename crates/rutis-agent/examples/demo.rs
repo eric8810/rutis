@@ -102,7 +102,7 @@ async fn main() -> Result<(), CordisError> {
         .provide_as(llm_key(), llm)
         .expect("provide llm service");
     let tools_view = root.plugin(ToolsPlugin::new(vec![weather_tool()]));
-    let driver_view = root.plugin(AgentDriverPlugin::new(10000));
+    let driver_view = root.plugin(AgentDriverPlugin::new(10000).with_default_session_path());
     (&tools_view).await.expect("tools loads");
     (&driver_view)
         .await

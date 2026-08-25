@@ -43,6 +43,18 @@ pub fn session_path_key() -> TypeKey {
     TypeKey::of::<Option<PathBuf>>()
 }
 
+/// 默认 session 持久化路径约定:`<cwd>/.rutis/session.json`。
+///
+/// 所有"人用"宿主(CLI / examples)应统一用它,使 agent 跨进程/跨会话
+/// 自动恢复模型历史(`Session::restore`)。`AgentDriverPlugin::new()`
+/// 保持"默认关闭"(None)——框架语义不变,由宿主显式启用。
+pub fn default_session_path() -> PathBuf {
+    std::env::current_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join(".rutis")
+        .join("session.json")
+}
+
 /// agent 循环 driver:实现 [`Agent`] 接口,由 [`AgentDriverPlugin`] 装配。
 ///
 /// `cancel` 是 turn 级令牌:每次 `followup` 换新,`Agent::cancel` 与
@@ -508,6 +520,13 @@ impl AgentDriverPlugin {
     /// Session),此后每 turn 结束 + fiber 卸载原子落盘。
     pub fn with_session_path(mut self, path: impl Into<PathBuf>) -> Self {
         self.session_path = Some(path.into());
+        self
+    }
+
+    /// 启用默认 session 持久化路径(`<cwd>/.rutis/session.json`)。
+    /// 人用宿主的推荐入口:一行启用跨会话记忆。
+    pub fn with_default_session_path(mut self) -> Self {
+        self.session_path = Some(default_session_path());
         self
     }
 }

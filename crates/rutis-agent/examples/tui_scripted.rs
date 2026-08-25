@@ -56,14 +56,15 @@ async fn main() {
     let root = Ctx::root().expect("run inside a tokio runtime");
     root.provide_as(llm_key(), service).expect("provide llm");
     let tools_view = root.plugin(ToolsPlugin::new(vec![weather_tool()]));
-    let driver_view = root.plugin(AgentDriverPlugin::new(10000));
+    let driver_view = root.plugin(AgentDriverPlugin::new(10000).with_default_session_path());
+    (&tools_view).await.expect("tools loads");
+    (&driver_view).await.expect("driver loads");
+    // TUI 在 driver 装载完成后创建:apply 内 get agent 必成功(启动门控)
     let tui_view = root.plugin(TuiPlugin::new().with_intro(vec![
         "[scripted backend] 回复为固定脚本,与输入无关(离线冒烟用)。会演示 reasoning(折叠块)。"
             .to_string(),
         "接真实模型:cargo run -p rutis-agent --example tui".to_string(),
     ]));
-    (&tools_view).await.expect("tools loads");
-    (&driver_view).await.expect("driver loads");
     if let Err(e) = (&tui_view).await {
         eprintln!("tui failed: {e}");
     }
