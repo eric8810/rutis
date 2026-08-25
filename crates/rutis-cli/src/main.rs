@@ -33,6 +33,9 @@ OPTIONS:
     -m, --model <ID>      model id [env: AIMUX_MODEL] [default: deepseek-chat]
         --scripted        offline demo backend (no API key needed)
         --reload-demo     (scripted) first turn calls self_reload to demo hot-restart
+        --reload-handoff <PATH>
+                          self_reload handoff path for --reload-demo
+                          [default: /tmp/rutis-smoke/reload-intent.md]
     -h, --help            print this help
     -V, --version         print version
 ";
@@ -43,6 +46,7 @@ async fn main() {
     let mut model = std::env::var("AIMUX_MODEL").unwrap_or_else(|_| "deepseek-chat".into());
     let mut scripted = false;
     let mut reload_demo = false;
+    let mut reload_handoff = "/tmp/rutis-smoke/reload-intent.md".to_string();
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -50,6 +54,7 @@ async fn main() {
             "-m" | "--model" => model = value(&mut args, &arg),
             "--scripted" => scripted = true,
             "--reload-demo" => reload_demo = true,
+            "--reload-handoff" => reload_handoff = value(&mut args, &arg),
             "-h" | "--help" => {
                 print!("{USAGE}");
                 return;
@@ -66,7 +71,10 @@ async fn main() {
     }
 
     let llm: Arc<dyn LanguageModel> = if scripted {
-        Arc::new(rutis_agent::ScriptedLlm::new(scripted_responses(reload_demo)))
+        Arc::new(rutis_agent::ScriptedLlm::new(scripted_responses(
+            reload_demo,
+            &reload_handoff,
+        )))
     } else {
         match aimux_providers::provider(&provider, None, &model, None) {
             Ok(m) => Arc::from(m),
@@ -281,7 +289,8 @@ async fn run(
 
 /// 离线演示脚本:一轮工具调用(建文件 + cat)+ 一轮终答。
 /// `reload_demo` 时第一轮调用 `self_reload` 演示宿主侧热重启闭环。
-fn scripted_responses(reload_demo: bool) -> Vec<rutis_agent::LlmResponse> {
+/// handoff 路径可经 `--reload-handoff` 参数化(默认 `/tmp/rutis-smoke/reload-intent.md`)。
+fn scripted_responses(reload_demo: bool, reload_handoff: &str) -> Vec<rutis_agent::LlmResponse> {
     use aimux_core::tool::ToolCall;
     use serde_json::json;
 
@@ -325,7 +334,7 @@ fn scripted_responses(reload_demo: bool) -> Vec<rutis_agent::LlmResponse> {
                 "reload1",
                 "self_reload",
                 json!({
-                    "handoff": "/tmp/rutis-smoke/reload-intent.md",
+                    "handoff": reload_handoff,
                 }),
             )]),
         );
