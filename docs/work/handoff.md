@@ -105,3 +105,29 @@
 - 督工可加更复杂策略(定时/资源阈值,当前仅失败+消息数)。
 - 超长 session 的"模型自动感知历史"可探索(system prompt 加记忆指针)。
 
+
+## 七、本轮更新(2026-08-25 五 / 六轮,自主持续推进)
+
+### 已完成并推送
+1. **参数化 --reload-handoff**(b66d664):self_reload demo 路径不再硬编码。
+2. **常规 CI(ci.yml)**:push/PR 自动跑 cargo test --workspace + all-targets
+   check。关键坑:rutis-agent path 依赖外部 rutui checkout,actions/checkout
+   path 不能逃逸 workspace → symlink 到 $GITHUB_WORKSPACE/../rutui。已绿。
+3. **文档澄清 crates.io 版本陈旧**(df25e8b):README/cli README/release notes
+   更新为"最新走 GitHub Releases 或源码构建";crates.io 0.1.0 是无 rutui 旧版。
+4. **记忆指针(memory pointer,bc58112)**:恢复的 session(generation>1)在
+   system prompt 尾部附加"你在继续历史对话(第 N 代)"——直接回应
+   "session 恢复≠模型自动引用历史"痛点。测试 12 全绿。
+
+### 关键发现(下一代必读)
+- **rutui 依赖方式**:path = "../../../rutui/..."(仓库外兄弟 checkout)。
+  CI 需 symlink;crates.io 发布前需先把 rutui-* 发布到 crates.io 或改结构。
+- **crates.io 版本陈旧**:rutis/rutis-agent/rutis-cli 0.1.0 是 rutui 重写前版本。
+- **记忆指针语义**:仅 generation>1 触发(全新 session 首轮也有 user 消息,
+  "有历史"无法区分全新/恢复;generation 精确)。
+
+### 遗留(下一代可做)
+- 记忆指针的真实 LLM 冒烟(效果度量:模型是否真的引用了历史)。
+- rutui 发布 crates.io(需 token)后,重新发布 rutis 全家 + 更新 README。
+- 超长历史:记忆指针 + 压缩/摘要(当前全量塞 prompt,有长度上限)。
+- 督工更复杂策略(定时/资源阈值,当前仅失败+消息数)。
