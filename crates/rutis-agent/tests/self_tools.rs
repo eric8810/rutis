@@ -302,23 +302,13 @@ async fn self_rollback_dry_run_reports_previous_generation() {
     let prev = v.previous().unwrap();
     assert_eq!(prev.commit, "abc123", "上一代 = 倒数第二条");
 
-    // 工具本身:先把测试台账写到工具约定路径(相对 crate 目录),跑完清理
-    let real = PathBuf::from(VERSION_LEDGER_PATH);
-    if let Some(parent) = real.parent() {
-        std::fs::create_dir_all(parent).unwrap();
-    }
-    std::fs::write(&real, std::fs::read_to_string(&ledger).unwrap()).unwrap();
-
     let _root = Ctx::root().unwrap();
     let def = rutis_agent::self_rollback_tool();
-    let (ok, out) = run(&def, json!({})).await;
+    let (ok, out) = run(&def, json!({ "ledger": ledger })).await;
     assert!(ok, "{out}");
     assert!(out.contains("abc123"), "dry-run 报告上一代: {out}");
     assert!(out.contains("dry-run"), "{out}");
     assert!(!out.contains("rolled back"), "默认不执行: {out}");
-
-    // 清理测试台账
-    let _ = std::fs::remove_file(&real);
 }
 
 #[tokio::test]
@@ -334,19 +324,11 @@ async fn self_rollback_too_few_entries_errors() {
         serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
     assert!(v.previous().is_none());
 
-    let real = PathBuf::from(VERSION_LEDGER_PATH);
-    if let Some(parent) = real.parent() {
-        std::fs::create_dir_all(parent).unwrap();
-    }
-    std::fs::write(&real, std::fs::read_to_string(&ledger).unwrap()).unwrap();
-
     let _root = Ctx::root().unwrap();
     let def = rutis_agent::self_rollback_tool();
-    let (ok, out) = run(&def, json!({})).await;
+    let (ok, out) = run(&def, json!({ "ledger": ledger })).await;
     assert!(ok, "{out}");
     assert!(out.contains("fewer than 2 entries"), "{out}");
-
-    let _ = std::fs::remove_file(&real);
 }
 
 // ── 集成:自控 turn ─────────────────────────────────────────────────

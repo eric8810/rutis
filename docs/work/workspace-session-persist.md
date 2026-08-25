@@ -26,9 +26,9 @@
 - [x] tools/self_tools.rs:6 工具(self_status/self_persist/self_reload/self_build/self_check/self_rollback)+ VersionLedger
 - [x] 挂载:self_tools(ctx) 返回 Vec<ToolDef>;events 加 SelfReloadRequested;9 条测试
 ### 任务 3:验收
-- [ ] cargo test -p rutis-agent 全绿
-- [ ] 核心验收:重启后 session 恢复,模型历史连续
-- [ ] 更新 handoff.md
+- [x] cargo test -p rutis-agent 全绿(78 tests,3 轮稳定)
+- [x] 核心验收:重启后 session 恢复,模型历史连续(session_restored_after_driver_restart + dependency_reload_keeps_identity_when_persisted)
+- [x] 更新 handoff.md(见下一步)
 
 ## 关键决策
 - 保存时机:① followup 返回前(每 turn 结束)② fiber 卸载 effect disposer(LIFO 后注册先清理)
@@ -58,3 +58,10 @@
   - VersionLedger.save 自动建父目录;台账 docs/work/version-ledger.json。
 - 卡点/解决:测试 cwd 是 crate 目录非仓库根 → 台账相对路径写 crate 目录,测试用 crate 相对路径+建目录;
   self_build/self_check 真跑 cargo 递归测试 172s+并行不稳 → command 参数覆盖,轻命令锚"复用 bash+台账"逻辑。
+
+## 进展(任务 3 完成)
+- [2026-08-25] 任务 3 验收完成:全量 78 tests 全绿 ×3 轮稳定,workspace check 通过。
+  - 补充测试:dependency_reload_keeps_identity_when_persisted(有 path 时依赖重载 identity 稳定)。
+  - self_rollback 支持 ledger 参数(路径可注入,测试用临时目录,消除与 self_build 共享台账的竞争)。
+  - lib.rs 文档同步(Session 可选持久化)。
+- 待办:更新 handoff.md 标记任务完成。

@@ -277,3 +277,53 @@ fn session_id_fields_accessible() {
     let id = SessionId::next();
     let _ = (id.identity(), id.generation(), id.as_u64());
 }
+
+// ── 补充:有 path 时依赖重载,identity 稳定、generation 递增 ──────────
+
+#[tokio::test]
+async fn dependency_reload_keeps_identity_when_persisted() {
+    let tmp = TempDir::new("depreload");
+    let path = tmp.join("session.json");
+
+    // 第一代 driver:一轮对话落盘
+    let root = Ctx::root().unwrap();
+    let id1;
+    {
+        let (tools_view, driver_view, _llm) = load_driver(
+            &root,
+            Some(&path),
+            vec![LlmResponse::content("gen1")],
+        )
+        .await;
+        let agent = root.get_as::<dyn Agent>(agent_key()).unwrap();
+        id1 = agent.id();
+        let _ = soon(agent.followup("g1")).await.unwrap();
+        soon(async {
+            driver_view.dispose().await.unwrap();
+            tools_view.dispose().await.unwrap();
+        })
+        .await;
+    }
+
+    // 第二代(新 root,模拟进程重启):identity 稳定 + 历史连续
+    let root2 = Ctx::root().unwrap();
+    let (tools_view2, driver_view2, _llm2) = load_driver(
+        &root2,
+        Some(&path),
+        vec![LlmResponse::content("gen2")],
+    )
+    .await;
+    let agent2 = root2.get_as::<dyn Agent>(agent_key()).unwrap();
+    assert_eq!(agent2.id().as_u64(), id1.as_u64(), "持久化时 identity 稳定");
+    assert_eq!(agent2.id().generation(), id1.generation() + 1);
+    // 历史未丢(对话未加新消息前,消息数 = 第一代 2 条)
+    assert_eq!(agent2.session().messages().len(), 2);
+    let _ = soon(agent2.followup("g2")).await.unwrap();
+    assert_eq!(agent2.session().messages().len(), 4);
+
+    soon(async {
+        driver_view2.dispose().await.unwrap();
+        tools_view2.dispose().await.unwrap();
+    })
+    .await;
+}

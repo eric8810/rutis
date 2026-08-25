@@ -332,16 +332,21 @@ pub fn self_reload(ctx: Ctx) -> ToolDef {
 pub fn self_rollback_tool() -> ToolDef {
     ToolDef::new(
         "self_rollback",
-        "Roll back to the previous generation using the version ledger (docs/work/version-ledger.json). Default: dry-run, reports the target commit and the git command. Pass apply=true to actually run `git checkout <prev-commit>` (destructive: uncommitted changes are kept).",
+        "Roll back to the previous generation using the version ledger (docs/work/version-ledger.json). Default: dry-run, reports the target commit and the git command. Pass apply=true to actually run `git checkout <prev-commit>` (destructive: uncommitted changes are kept). Optional `ledger` overrides the ledger path (tests use this).",
         json!({
             "type": "object",
             "properties": {
-                "apply": { "type": "boolean", "description": "If true, actually run git checkout. If false/absent, dry-run report only." }
+                "apply": { "type": "boolean", "description": "If true, actually run git checkout. If false/absent, dry-run report only." },
+                "ledger": { "type": "string", "description": "Optional ledger path; default docs/work/version-ledger.json." }
             },
             "required": []
         }),
         |args: Value| async move {
-            let ledger = VersionLedger::load(Path::new(VERSION_LEDGER_PATH));
+            let ledger_path = args["ledger"]
+                .as_str()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from(VERSION_LEDGER_PATH));
+            let ledger = VersionLedger::load(&ledger_path);
             match ledger.previous() {
                 None => Ok(Value::String(
                     "error: version ledger has fewer than 2 entries — no previous generation to roll back to. Run self_build successfully at least twice first.".to_string(),

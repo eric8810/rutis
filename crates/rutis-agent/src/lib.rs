@@ -4,7 +4,7 @@
 //! `docs/design-agent-verification-tui-2026-08-18.md`(验证与 TUI)。
 //! 一句话定义:**一个 aimux [`LanguageModel`](aimux_core::language_model) 服务
 //! + 一个 [`ToolRegistry`] 插件 + 一个实现 [`Agent`] 接口的 driver 插件
-//! + 一个内存 [`Session`](连续 loop 的事实源)。**
+//! + 一个 [`Session`](连续 loop 的事实源,可选持久化:重启恢复历史)。**
 //!
 //! - **LLM 后端**是服务不是插件:aimux 已实现 seam(329 provider),
 //!   直接 `root.provide_as(llm_key(), model)`——不写 `LlmPlugin` 空壳。
@@ -14,7 +14,9 @@
 //! - **[`AgentDriverPlugin`]** 双门控(`injects = [llm, tools]`),就绪后
 //!   提供 `dyn Agent`;fiber 卸载经 `ctx.cancelled()` 级联取消当前 turn。
 //! - **[`Session`]** 只存模型可见消息(一层,无事件→投影两层):多轮
-//!   `followup` 之间 history 连续;session 是事实源。
+//!   `followup` 之间 history 连续;session 是事实源。可选持久化
+//!   (`AgentDriverPlugin::with_session_path`):重启后 history 恢复,
+//!   identity 稳定、generation 递增;默认关闭(纯内存,现状不变)。
 //! - **turn 过程经 EventBus 广播**:`followup` 返回终态,文本增量 /
 //!   工具调用 / 工具结果 / turn 终态 emit 到 [`events`] 的 `agent/*`
 //!   事件(`AgentTextDelta` 等)——任何观察方订阅事件,不独占 stream;
