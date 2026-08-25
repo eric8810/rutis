@@ -58,7 +58,7 @@ async fn main() {
     tools.push(weather_tool());
     let tools_view = root.plugin(ToolsPlugin::new(tools));
     let driver_view = root
-        .plugin(AgentDriverPlugin::new(16).with_system_prompt(minimal_persona(&model_id, &cwd)));
+        .plugin(AgentDriverPlugin::new(10000).with_system_prompt(minimal_persona(&model_id, &cwd)));
     let tui_view = root.plugin(TuiPlugin::new().with_intro(vec![
         format!("backend: {provider}/{model_id}"),
         format!("cwd: {cwd}"),

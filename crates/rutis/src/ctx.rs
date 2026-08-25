@@ -70,7 +70,10 @@ impl Ctx {
         &self.0.shared.handle
     }
 
-    pub(crate) fn error_sink(&self) -> ErrorSink {
+    /// 错误路由:插件运行期(apply 之外)的异步错误经此上报,不崩 root。
+    /// 供外部插件在 turn 边界兜底(如 session 落盘失败),与框架内部
+    /// 路由同一 sink——可观测,不静默。
+    pub fn error_sink(&self) -> ErrorSink {
         self.0.shared.error_sink.clone()
     }
 

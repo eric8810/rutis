@@ -5,6 +5,7 @@
 //! 随 fiber 卸载。driver 侧每个增量 `emit`:
 //!
 //! - [`AgentTextDelta`][]:模型文本增量(流式逐块)
+//! - [`AgentReasoning`][]:模型推理/reasoning 增量(流式逐块,渲染为 Thinking 块)
 //! - [`AgentToolCall`][]:工具调用开始
 //! - [`AgentToolResult`][]:工具结果(失败为 `error: ...` 回喂文本)
 //! - [`AgentTurnEnd`][]:turn 终态(`ok=false` 时 `error` 为错误摘要)
@@ -29,6 +30,24 @@ pub struct AgentTextDelta {
 
 impl Event for AgentTextDelta {
     const NAME: &'static str = "agent/text-delta";
+    type Value = ();
+}
+
+/// 模型推理/思考(reasoning)增量(流式逐块,经 EventBus 广播)。
+///
+/// 由 driver 收到 `StreamPart::ReasoningDelta` 时发出;TUI 侧渲染为
+/// rutui 的 `ThinkingBlock`(reasoning 折叠块),与正文 `AgentTextDelta`
+/// 区分开。
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct AgentReasoning {
+    pub session: SessionId,
+    pub step: usize,
+    pub delta: String,
+}
+
+impl Event for AgentReasoning {
+    const NAME: &'static str = "agent/reasoning";
     type Value = ();
 }
 

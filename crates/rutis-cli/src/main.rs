@@ -108,7 +108,7 @@ async fn run(
     root.provide_as(llm_key(), llm)?;
     let tools_view = root.plugin(ToolsPlugin::new(minimal_tools()));
     let driver_view =
-        root.plugin(AgentDriverPlugin::new(16).with_system_prompt(minimal_persona(model, &cwd)));
+        root.plugin(AgentDriverPlugin::new(10000).with_system_prompt(minimal_persona(model, &cwd)));
     let tui_view = root.plugin(TuiPlugin::new().with_intro(vec![
         format!("backend: {provider}/{model}"),
         format!("cwd: {cwd}"),

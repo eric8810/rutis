@@ -7,6 +7,7 @@
 //! 逐步检查取消。session 是唯一事实源;过程增量经事件广播,不独占
 //! stream——`followup` 只触发 turn + 回传终态。
 
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use aimux_core::content::ContentPart;
@@ -23,7 +24,8 @@ use tokio_util::sync::CancellationToken;
 
 use crate::agent::{Agent, AgentError, AgentStatus, SessionSnapshot, StatusCell};
 use crate::events::{
-    AgentPreStep, AgentStepEvent, AgentTextDelta, AgentToolCall, AgentToolResult, AgentTurnEnd,
+    AgentPreStep, AgentReasoning, AgentStepEvent, AgentTextDelta, AgentToolCall, AgentToolResult,
+    AgentTurnEnd,
     PreStepDecision, ToolPostExecute, ToolPreExecute,
 };
 use crate::session::{Session, SessionId};
@@ -49,6 +51,8 @@ pub struct AgentDriver {
     max_steps: usize,
     /// system prompt(minimal mode persona 等);None = 无 system 消息。
     system_prompt: Option<String>,
+    /// 可选 session 持久化路径;None = 不持久化(默认,现状不变)。
+    session_path: Option<PathBuf>,
 }
 
 /// `tools/pre-execute` 终态续延:放行。
@@ -87,16 +91,38 @@ impl AgentDriver {
         ctx: Ctx,
         max_steps: usize,
         system_prompt: Option<String>,
+        session_path: Option<PathBuf>,
     ) -> Self {
+        let session = match &session_path {
+            Some(p) => Session::restore(p), // 失败静默降级为新 Session
+            None => Session::new(),
+        };
         Self {
             llm,
             tools,
             ctx,
-            session: Mutex::new(Session::new()),
+            session: Mutex::new(session),
             status: StatusCell::idle(),
             cancel: Mutex::new(CancellationToken::new()),
             max_steps,
             system_prompt,
+            session_path,
+        }
+    }
+
+    /// 落盘当前 session;未配置路径 = 静默 no-op。
+    /// 错误路由 ErrorSink(turn 不阻断,但可观测)。
+    fn persist_session(&self) {
+        let Some(path) = self.session_path.clone() else {
+            return;
+        };
+        let result = {
+            let session = self.session.lock().unwrap();
+            session.persist(&path)
+        };
+        if let Err(e) = result {
+            let err: Box<dyn std::error::Error + Send + Sync> = format!("session persist failed: {e}").into();
+            self.ctx.error_sink()(Arc::new(CordisError::PluginFailed(err)));
         }
     }
 
@@ -110,6 +136,17 @@ impl AgentDriver {
         self.ctx.events().emit(
             &self.ctx,
             Arc::new(AgentTextDelta {
+                session,
+                step,
+                delta,
+            }),
+        );
+    }
+
+    fn emit_reasoning(&self, session: SessionId, step: usize, delta: String) {
+        self.ctx.events().emit(
+            &self.ctx,
+            Arc::new(AgentReasoning {
                 session,
                 step,
                 delta,
@@ -291,6 +328,10 @@ impl AgentDriver {
                         text.push_str(&delta);
                         self.emit_delta(session, step, delta);
                     }
+                    Chunk::Part(Ok(StreamPart::ReasoningDelta { delta, .. })) => {
+                        // reasoning 增量单独广播,不进入 assistant 文本/会话回写
+                        self.emit_reasoning(session, step, delta);
+                    }
                     Chunk::Part(Ok(StreamPart::ToolCall {
                         tool_call_id,
                         tool_name,
@@ -424,6 +465,8 @@ impl Agent for AgentDriver {
             let out = self.run_loop(&token).await;
             self.status.set(AgentStatus::Idle);
             self.emit_turn_end(self.id(), &out);
+            // 保存时机 ①:每 turn 结束原子落盘(未配置路径 = no-op)
+            self.persist_session();
             out
         })
     }
@@ -435,6 +478,7 @@ impl Agent for AgentDriver {
 pub struct AgentDriverPlugin {
     max_steps: usize,
     system_prompt: Option<String>,
+    session_path: Option<PathBuf>,
     inject_keys: Vec<TypeKey>,
 }
 
@@ -443,6 +487,7 @@ impl AgentDriverPlugin {
         Self {
             max_steps,
             system_prompt: None,
+            session_path: None,
             inject_keys: vec![llm_key(), tools_key()],
         }
     }
@@ -450,6 +495,13 @@ impl AgentDriverPlugin {
     /// 静态 system prompt(minimal mode persona);每步作为 instructions 前置。
     pub fn with_system_prompt(mut self, prompt: impl Into<String>) -> Self {
         self.system_prompt = Some(prompt.into());
+        self
+    }
+
+    /// 启用 session 持久化:`apply` 时从 path 恢复(失败静默降级为新
+    /// Session),此后每 turn 结束 + fiber 卸载原子落盘。
+    pub fn with_session_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.session_path = Some(path.into());
         self
     }
 }
@@ -484,14 +536,31 @@ impl Plugin for AgentDriverPlugin {
                 ctx.clone(),
                 self.max_steps,
                 self.system_prompt.clone(),
+                self.session_path.clone(),
             ));
             ctx.provide_as::<dyn Agent>(agent_key(), driver.clone())?;
 
+            // fiber 卸载 → 落盘 session(持久化路径已配置时)。
+            // 保存时机 ②:挂 effect disposer,后注册→先清理(LIFO),
+            // 保证卸载时 session 是最后一代快照。
+            let persist_driver = driver.clone();
+            ctx.effect(move || {
+                let driver = persist_driver.clone();
+                Effect::AsyncDisposer(Box::new(move || {
+                    let driver = driver.clone();
+                    Box::pin(async move {
+                        driver.persist_session();
+                        Ok(())
+                    })
+                }))
+            })?;
+
             // fiber 卸载 → cancel 当前 turn(driver 内 token 级联停止)
             let watcher_ctx = ctx.clone();
+            let watcher_driver = driver.clone();
             ctx.effect(move || {
                 let watcher_ctx = watcher_ctx.clone();
-                let driver = driver.clone();
+                let driver = watcher_driver.clone();
                 let handle = watcher_ctx.handle().clone();
                 handle.spawn(async move {
                     watcher_ctx.cancelled().await;

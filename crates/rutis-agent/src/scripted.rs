@@ -33,6 +33,8 @@ pub fn tool_call(id: impl Into<String>, name: impl Into<String>, input: Value) -
 pub struct LlmResponse {
     pub content: Option<String>,
     pub tool_calls: Vec<ToolCall>,
+    /// 可选:推理/思考内容(reasoning)。演示时用于产出 `StreamPart::ReasoningDelta`。
+    pub reasoning: Option<String>,
 }
 
 impl LlmResponse {
@@ -40,6 +42,7 @@ impl LlmResponse {
         Self {
             content: Some(s.into()),
             tool_calls: Vec::new(),
+            reasoning: None,
         }
     }
 
@@ -47,7 +50,14 @@ impl LlmResponse {
         Self {
             content: None,
             tool_calls: calls,
+            reasoning: None,
         }
+    }
+
+    /// 在已有响应上附加 reasoning(演示用),返回自身。
+    pub fn with_reasoning(mut self, r: impl Into<String>) -> Self {
+        self.reasoning = Some(r.into());
+        self
     }
 }
 
@@ -181,6 +191,23 @@ impl LanguageModel for ScriptedLlm {
         let finish = finish_reason(&response);
         let stream = async_stream::stream! {
             yield Ok(StreamPart::StreamStart { warnings: Vec::new() });
+            if let Some(r) = &response.reasoning {
+                yield Ok(StreamPart::ReasoningStart {
+                    id: "reason-0".to_string(),
+                    provider_metadata: None,
+                });
+                for delta in text_chunks(r) {
+                    yield Ok(StreamPart::ReasoningDelta {
+                        id: "reason-0".to_string(),
+                        delta,
+                        provider_metadata: None,
+                    });
+                }
+                yield Ok(StreamPart::ReasoningEnd {
+                    id: "reason-0".to_string(),
+                    provider_metadata: None,
+                });
+            }
             if let Some(text) = &response.content {
                 for delta in text_chunks(text) {
                     yield Ok(StreamPart::TextDelta {
