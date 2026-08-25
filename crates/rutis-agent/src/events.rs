@@ -20,6 +20,20 @@ use serde_json::Value;
 use crate::session::SessionId;
 use crate::tools::ToolOutput;
 
+/// 自我控制工具请求重启(`self_reload` 工具广播;宿主监听后
+/// 优雅退出并重启进程——冷重启版,督工热重启为后续)。
+#[derive(Debug, Clone)]
+pub struct SelfReloadRequested {
+    pub session: SessionId,
+    pub reason: String,
+    pub intent_path: String,
+}
+
+impl Event for SelfReloadRequested {
+    const NAME: &'static str = "self/reload-requested";
+    type Value = ();
+}
+
 /// 模型文本增量(流式逐块,经 EventBus 广播)。
 #[derive(Debug, Clone)]
 pub struct AgentTextDelta {

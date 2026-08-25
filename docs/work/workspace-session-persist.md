@@ -23,8 +23,8 @@
 - [x] driver.rs:with_session_path + apply restore + turn 结束 persist + effect disposer persist
 - [x] 测试:session_persist_roundtrip / corrupt_file_starts_fresh / session_restored_after_driver_restart / not_persisted_by_default + missing/version/error-break
 ### 任务 2:自我控制工具包
-- [ ] tools/self.rs:self_status/self_persist/self_reload + self_build/self_check(复用 bash)+ self_rollback
-- [ ] 挂载:minimal_tools 或新 defs 入口;每个工具一条 scripted 测试
+- [x] tools/self_tools.rs:6 工具(self_status/self_persist/self_reload/self_build/self_check/self_rollback)+ VersionLedger
+- [x] 挂载:self_tools(ctx) 返回 Vec<ToolDef>;events 加 SelfReloadRequested;9 条测试
 ### 任务 3:验收
 - [ ] cargo test -p rutis-agent 全绿
 - [ ] 核心验收:重启后 session 恢复,模型历史连续
@@ -46,3 +46,15 @@
   - AgentDriverPlugin::with_session_path;保存时机 ① followup 末尾 ② fiber 卸载 AsyncDisposer。
   - rutis Ctx::error_sink() 由 pub(crate) 改为 pub(落盘失败可观测,不静默)。
   - 注意:依赖重载无 path 时 identity 仍全局自增(integration.rs:198 assert_ne 成立)。
+
+## 进展(任务 2 完成)
+- [2026-08-25] 任务 2 完成:9 个 self 工具测试全绿,全量 77 tests 通过(0.01s self 套件,不再真跑 cargo)。
+  - 6 工具:self_status(身份/代际/状态/消息数/路径)、self_persist(快照落盘,无路径报错)、
+    self_build/self_check(复用 bash runner,command 可覆盖,self_build 成功记台账)、
+    self_reload(写 handoff 意图 + 广播 SelfReloadRequested,handoff 路径可参数化)、
+    self_rollback(VersionLedger 台账,dry-run 默认,apply=true 执行 git checkout)。
+  - SessionSnapshot::persist 新增(供 self_persist 经 Agent::session() 组合,不污染 Agent trait)。
+  - driver provide session_path_key 服务(路径经 with_session_path 注入)。
+  - VersionLedger.save 自动建父目录;台账 docs/work/version-ledger.json。
+- 卡点/解决:测试 cwd 是 crate 目录非仓库根 → 台账相对路径写 crate 目录,测试用 crate 相对路径+建目录;
+  self_build/self_check 真跑 cargo 递归测试 172s+并行不稳 → command 参数覆盖,轻命令锚"复用 bash+台账"逻辑。

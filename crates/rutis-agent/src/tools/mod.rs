@@ -9,6 +9,7 @@
 
 pub mod bash;
 pub mod replace_text;
+pub mod self_tools;
 
 use std::collections::HashMap;
 use std::future::Future;

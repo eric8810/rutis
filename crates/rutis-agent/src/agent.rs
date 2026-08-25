@@ -5,6 +5,7 @@
 //! 事件广播——输出是广播,任何观察方(TUI / 日志 / 未来前端)订阅
 //! 事件即可,晚订阅、只看不动都行;监听器随注册方 fiber 卸载(D28)。
 
+use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use aimux_core::message::ModelMessage;
@@ -110,5 +111,24 @@ impl SessionSnapshot {
 
     pub fn messages(&self) -> &[ModelMessage] {
         &self.messages
+    }
+
+    /// 快照落盘(供 `self_persist` 工具经 `Agent::session()` 组合调用;
+    /// 不新增 `Agent` trait 方法)。原子写,错误上抛。
+    pub fn persist(&self, path: &Path) -> Result<(), String> {
+        let file = crate::session::SessionFile {
+            version: 1,
+            id: self.id.identity(),
+            generation: self.id.generation(),
+            messages: self.messages.clone(),
+            saved_at_ms: crate::session::now_ms(),
+        };
+        let json = serde_json::to_string_pretty(&file)
+            .map_err(|e| format!("serialize session: {e}"))?;
+        let tmp = crate::session::tmp_path(path);
+        std::fs::write(&tmp, json).map_err(|e| format!("write {}: {e}", tmp.display()))?;
+        std::fs::rename(&tmp, path)
+            .map_err(|e| format!("rename {} -> {}: {e}", tmp.display(), path.display()))?;
+        Ok(())
     }
 }

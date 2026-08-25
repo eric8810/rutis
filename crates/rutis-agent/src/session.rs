@@ -59,8 +59,11 @@ impl SessionId {
 /// 持久化文件格式(version 1)。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionFile {
+    /// 文件格式版本(当前 1)。
     pub version: u32,
+    /// 稳定身份(跨重启不变)。
     pub id: u64,
+    /// 分代(重启 +1)。
     pub generation: u32,
     pub messages: Vec<ModelMessage>,
     pub saved_at_ms: u64,
@@ -154,7 +157,7 @@ impl Default for Session {
 }
 
 /// 毫秒时间戳(落盘审计用)。
-fn now_ms() -> u64 {
+pub(crate) fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
@@ -162,7 +165,7 @@ fn now_ms() -> u64 {
 }
 
 /// 同目录临时文件:`.rutis.session.json.tmp` → rename 覆盖。
-fn tmp_path(path: &Path) -> PathBuf {
+pub(crate) fn tmp_path(path: &Path) -> PathBuf {
     let mut os = path.as_os_str().to_owned();
     os.push(".tmp");
     PathBuf::from(os)

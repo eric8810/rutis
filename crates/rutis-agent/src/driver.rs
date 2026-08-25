@@ -37,6 +37,12 @@ pub fn llm_key() -> TypeKey {
     TypeKey::of::<dyn LanguageModel>()
 }
 
+/// session 持久化路径服务键(`AgentDriverPlugin` 在 apply 时 provide;
+/// 供 `self_persist` 等自我控制工具经服务注册表读取,不污染 `Agent` trait)。
+pub fn session_path_key() -> TypeKey {
+    TypeKey::of::<Option<PathBuf>>()
+}
+
 /// agent 循环 driver:实现 [`Agent`] 接口,由 [`AgentDriverPlugin`] 装配。
 ///
 /// `cancel` 是 turn 级令牌:每次 `followup` 换新,`Agent::cancel` 与
@@ -539,6 +545,8 @@ impl Plugin for AgentDriverPlugin {
                 self.session_path.clone(),
             ));
             ctx.provide_as::<dyn Agent>(agent_key(), driver.clone())?;
+            // 持久化路径服务:自我控制工具(`self_status`/`self_persist`)读取
+            ctx.provide_as::<Option<PathBuf>>(session_path_key(), Arc::new(self.session_path.clone()))?;
 
             // fiber 卸载 → 落盘 session(持久化路径已配置时)。
             // 保存时机 ②:挂 effect disposer,后注册→先清理(LIFO),
