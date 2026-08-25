@@ -131,8 +131,14 @@ impl Session {
     }
 
     /// 原子落盘:写临时文件 + rename(同目录,避免跨设备)。
+    /// 父目录不存在时自动创建(默认路径 `.rutis/session.json` 的
+    /// `.rutis` 目录可能尚未存在)。
     /// 错误上抛,由调用方决定(落盘失败不阻断 turn,但可观测)。
     pub fn persist(&self, path: &Path) -> Result<(), String> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("create dir {}: {e}", parent.display()))?;
+        }
         let file = SessionFile {
             version: SESSION_FILE_VERSION,
             id: self.id.identity(),
