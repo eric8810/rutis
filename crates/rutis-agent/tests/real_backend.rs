@@ -83,8 +83,11 @@ fn backend() -> Arc<dyn LanguageModel> {
 }
 
 #[tokio::test]
-#[ignore = "real backend: needs DEEPSEEK_API_KEY (or AIMUX_PROVIDER/AIMUX_MODEL for local ollama)"]
+#[ignore = "real backend: needs DEEPSEEK_API_KEY (or AIMUX_PROVIDER/AIMUX_MODEL for local ollama); run with -- --ignored"]
 async fn real_backend_multi_turn_with_tool() {
+    // (round44) 有 DEEPSEEK_API_KEY 时实测通过(3.83s):真实 deepseek-chat
+    // 调用 get_weather 工具 + 多轮 history 连续。非 get void 的假绿。
+    // 手动跑: cargo test -p rutis-agent --test real_backend -- --ignored
     // 无 key 时明确跳过(而不是在 provider 构造处 panic)
     let provider = std::env::var("AIMUX_PROVIDER").unwrap_or_else(|_| "deepseek".into());
     let env_var = format!("{}_API_KEY", provider.to_uppercase().replace('-', "_"));
