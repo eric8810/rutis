@@ -24,9 +24,20 @@ where
 /// 再确认后续 turn 能看到新工具 + 新 persona。
 #[tokio::test]
 async fn self_iteration_loop_persona_plus_hotplug() {
-    // 先构建插件 .so(测试前置:需要 librutis_hotplug_demo.so)
-    let so = "target/debug/librutis_hotplug_demo.so";
-    if !std::path::Path::new(so).exists() {
+    // 先构建插件 .so(测试前置:需要 librutis_hotplug_demo.so)。
+    // 产物在**仓库根** target/ 下,CARGO_MANIFEST_DIR 是本期 crate 的绝对路径
+    // (/…/crates/rutis-agent),往上级两级即仓库根(/…/rutis)——cwd 无关,
+    // CI/任意目录都正确定位,不会像原相对路径那样在别处 cwd 下误 skip。
+    let repo_root = {
+        let m = env!("CARGO_MANIFEST_DIR");
+        let p = std::path::Path::new(m);
+        p.parent().unwrap().parent().unwrap()
+    };
+    let so = repo_root
+        .join("target/debug/librutis_hotplug_demo.so")
+        .to_string_lossy()
+        .into_owned();
+    if !std::path::Path::new(&so).exists() {
         eprintln!("skip: {so} not built (run cargo build -p rutis-hotplug-demo)");
         return;
     }
