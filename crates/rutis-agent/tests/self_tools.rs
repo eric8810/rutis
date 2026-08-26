@@ -504,6 +504,24 @@ async fn skill_is_registered_self_tool() {
         "skill list should return skill entries (cwd-independent), got: {}",
         text
     );
+
+    // 精确 SKILL 代码检索:agent 实际用 `skill SKILL-U2` 复用方法论,
+    // 必须返回匹配行(大小写处理 + cwd 无关)。若退化会返回 not found。
+    let res2 = (def.run)(json!({ "key": "SKILL-U2" })).await;
+    let tex2 = res2
+        .ok()
+        .and_then(|val| val.as_str().map(str::to_owned))
+        .unwrap_or_else(|| "NO_TEXT".to_string());
+    assert!(
+        tex2.contains("SKILL-U2"),
+        "skill SKILL-U2 should return its row, got: {tex2}"
+    );
+    if let Some(single) = (def.run)(json!({ "key": "SKILL-DOESNOTEXIST" })).await.ok() {
+        assert!(
+            single.as_str().map_or(false, |s| s.contains("not found")),
+            "unknown SKILL should report not-found, got: {single}"
+        );
+    }
 }
 
 /// cwd 无关路径解析:default_ledger_path / default_handoff_path 必须指向
