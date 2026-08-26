@@ -214,3 +214,30 @@ bash 驱动行动 → 改代码/文档 → 测试 → commit → push → 审视
   把新认知带进下一轮。这不是系统注入,但有效——因为主动选择吸收什么。
 - **自我迭代闭环已验证**(8659ecc):同一 agent 运行中 self_persona(更新认知)
   + hotplug_load(挂载工具),下一轮同时生效。
+
+## 十、修复"自主激活 cancelled"链(2026-08-26,复活后完成)
+
+### 症状
+Session 观察显示:`ok(msgs=1100)` 后连续 7× `fail(agent turn stopped (cancelled))`。
+
+### 根因
+`AgentTurnEnd` 在 driver 的 `followup` 内部 emit(第 562 行),此时前一 turn
+status 仍是 `Running`。SelfDriven 在事件栈内**同步**调 followup → 与运行中的
+turn 冲突取消。
+
+### 修复(c0c9aeb,死机前做完复活后提交)
+1. **driver.turn_lock**(tokio Mutex):并发 turn(TUI 提交 vs SelfDriven 自主)
+   串行,防 session 历史乱序(悬空 tool_call)。
+2. **driver.auto_compact**:上下文超限自动把早期消息折叠进 summary。
+3. **SelfDriven**:followup spawn 延迟执行(不在事件回调栈内同步)。
+4. **Session.sanitize()**:规整损坏 session(孤儿 tool_result/悬空 tool_call/
+   尾随 user);repair_session example 一次性修复文件。
+
+### 验证(4eefdb6)
+`auto_activation_turns_are_not_cancelled`:**turn results [ok, ok, ok]**
+用户 1 轮 + 自主 2 轮全部成功,无 cancelled。实锤修复生效。
+
+### 关键教训
+- 事件回调栈内不能同步调 followup(它再 emit 同类型事件 → 递归/冲突)。
+- turn 级并发必须由 driver 互斥串行,不能靠调用方自觉。
+- 死机前的工作要能还原:git diff + 待办 + handoff = 断点续接凭据。
