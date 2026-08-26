@@ -1409,3 +1409,17 @@ round78 基线实证中"实机 e2e"此前依赖 round44 历史记录。本轮检
 **验证**:self_tools 15/15 绿;三 crate 基线 119+5+117=241/0。
 
 **提交**:self_check health_summary + 测试 + bench 更新。**状态**:工作区净,241 基线绿。
+
+## 八十三、health_summary 失败路径补测(RED 分支锁定,基线 241→242)(自主续跑)
+
+round82 给 self_check 加 health_summary 时只测了 GREEN 成功路径。审视发现 RED
+  失败路径未测——这是待办点(仅成功分支被测)。补:
+
+- **新测试** `self_check_health_summary_reports_red_on_failed`:构造含 `FAILED.`
+  行的输出(25+5 ok + 1 failed),断言 `[health] RED: 30 passed / 1 failed`。
+- 至此 health_summary 的 GREEN/RED 两分支均有测试锁定(round82 成功 + round83 失败)。
+- 基线 241 → **242**(agent 119→120)。bench §六 合计已更新。
+
+**验证**:self_tools 16/16 绿;三 crate 基线 120+5+117=242/0。
+
+**提交**:RED 分支测试 + bench 更新。**状态**:工作区净,242 基线绿。
