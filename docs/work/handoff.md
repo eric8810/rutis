@@ -1391,3 +1391,21 @@ round78 基线实证中"实机 e2e"此前依赖 round44 历史记录。本轮检
 **验证**:cargo build ok;self_tools 14/14 绿;240 基线(118+5+117=240)后改动零退化。
 
 **提交**:self_check 改进。**状态**:工作区净,240 基线绿。
+
+## 八十二、真实工程改进:self_check 追加健康摘要 [health](对称 self_build 反馈)(自主续跑)
+
+延续 round81(self_check 默认对齐 240 基线),发现对称的不一致:round81 改了口径但
+  self_check 仍只透传 bash 输出(长输出下 passed/failed 不易一眼看到),而 self_build
+  会解析输出并附 `[ledger] recorded`。改进 self_check 使其对称:
+
+- **新增 `health_summary()`**:解析 cargo test 输出的 `test result:` 行,累加
+  passed/failed,末尾附 `[health] GREEN|RED: N passed / M failed`(与 self_build
+  的 `[ledger]` 反馈对称)。
+- **新增测试** `self_check_appends_health_summary_parsing_test_result`:构造含
+  `test result:` 行的命令,断言透传 + `[health] GREEN: 30 passed / 0 failed`(25+5)。
+- 顺手清理 self_tools.rs 测试的未使用 import VERSION_LEDGER_PATH(警告清除)。
+- 基线更新:240 → **241**(agent 118→119,新增 health 测试)。bench §六 合计已更新。
+
+**验证**:self_tools 15/15 绿;三 crate 基线 119+5+117=241/0。
+
+**提交**:self_check health_summary + 测试 + bench 更新。**状态**:工作区净,241 基线绿。
