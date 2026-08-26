@@ -964,3 +964,20 @@ cwd-relative,已全修:
 
 **提交**:11bf2a2 + e564211。**状态**:工作区净,全套绿。
 **下一步**:其它真实问题/工具边界 / 技能库沉淀 / 维护。持续找真问题。
+
+## 五十五、self_todo 空串清除 bug 修复 + 工具功能测试补强(自主续跑)
+
+承接 round54 "审视其它工具精确路径测试空白" → 发现 self_todo/self_compact
+只有注册验证,无功能测试。
+- **写测试发现问题**:self_todo 功能测试暴露出真实 bug——工具宣称"pass empty
+  to clear",但 session.set_todo 总存 Some(""),重启后注入**空待办**(误导自动接续)。
+- **修复**:session.set_todo 空串→None(清除语义成真)。
+- **补功能测试**:
+  - self_todo_sets_todo_on_session(set 更新 session.todo / 空串清除)
+  - self_compact_trims_and_sets_summary(裁剪到 keep + summary 设置)
+- 两测试直接驱动工具(经 load_self_driver + run),非注册-only。
+- self_tools 14/14, session_persist 21/21。
+
+**提交**:249eea9。**状态**:工作区净,全套绿。
+**下一步**:继续审视其它 tools 的功能测试空白(self_check/self_hotload可能有)/
+  其它真实问题 / 维护。
