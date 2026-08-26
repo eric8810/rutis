@@ -1125,3 +1125,16 @@ codex thread_goals 目标预算(round38 defer 因"mock usage 全 0 不可测";ro
 
 **提交**:5086266。**状态**:工作区净,240 passed。
 **价值**:自主 agent 跨轮 token 成本硬保护完成。前瞻功能从研究→落地闭环。
+
+## 六十六、文档/技能库沉淀收尾(thread_goals 同步 + SKILL-E6 + 基线更新)(自主续跑)
+
+待办②推进:
+- **thread_goals 文档漂移清除**:peer-agent-study round65 完整落地同步(SKILL-E2
+  关心的"记录了但实际已落"漂移修正)。
+- **SKILL-E6 登记**:前瞻项前提变化重估方法论(round63-65 defer→前提变化→完整
+  落地模式)。技能库现 16 SKILL。skill 工具验证可读到 SKILL-E6。
+- **健康基线更新**:agent-bench-standards 第六节合计 236→240(thread_goals 落地
+  新增测试),保持对照标尺最新。
+
+**提交**:91edcb7 + 本次。**状态**:工作区净。
+**下一步**:前瞻项 codex goals 已闭环登记;可转其它前瞻项/新对象研究 / 维护。
