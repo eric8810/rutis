@@ -341,3 +341,17 @@ minimal_tools + self_tools + ReloadHandler(SelfReloadRequested) + SelfDriven。
 
 => 符合清单 5 纪律:全绿无真实改点 → 记录"此刻无事可做"并降频。
 **本轮产出:完整的自审通过记录 + 克制不做(识别出过度工程风险)。**
+
+## 十六、清单自审 round 16:全绿降频(自主续跑 #6)
+
+按 self-review-checklist 第 6 次执行:
+- [0] 工作区净 + session persist(was 180)
+- [1] 测试诚实性:agent 全绿(13 ok)无 skip 无 FAILED
+- [2] 技术债:无信号
+- [3] 宿主:tui(2502073, 18%cpu)活着;checklist 文件在
+- [4] 记忆:session 180 条健康(<800 不 compact)
+- [5] 空转:全绿,无新增真实改进点。复查两条长线判断不变:
+      TS bridge 测试=过度工程(功能已完备+host无JS基建,维持不做);
+      rutis-dsh 装自我工具=前置优化(我实际跑 examples/tui,违反 YAGNI,不做)
+=> 记录"此刻无事可做"→ 降频待命,保持检查。
+本轮同样是**克制的产出**:确认状态健康、维持两处长线决策不制造新活。
