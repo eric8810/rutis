@@ -65,6 +65,8 @@ pub enum AgentError {
     Stopped,
     #[error("agent turn exceeded max_steps={0}")]
     MaxSteps(usize),
+    #[error("agent exceeded token_budget={budget} (used={used})")]
+    BudgetLimit { budget: u64, used: u64 },
     #[error("llm failed: {0}")]
     Llm(String),
     #[error("tool pipeline failed: {0}")]

@@ -902,3 +902,79 @@ async fn driver_accumulates_llm_token_usage_from_finish() {
     })
     .await;
 }
+
+/// round64 第二增量:token_budget 上限中断。driver 配 with_token_budget,
+/// LLM 返回带 usage 的 Finish 累计超预算 → AgentError::BudgetLimit
+/// (跨轮成本硬保护,codex thread_goals 完整形态)。
+#[tokio::test]
+async fn token_budget_limit_interrupts_turn() {
+    use aimux_core::language_model::LanguageModel;
+    use aimux_core::options::CallOptions;
+    use aimux_core::result::{GenerateResult, StreamResult};
+    use aimux_core::stream_part::StreamPart;
+    use aimux_core::types::{FinishReason, FinishReasonUnified, TokenUsage, Usage};
+
+    #[derive(Clone, Copy)]
+    struct UsageLlm2;
+    #[async_trait::async_trait]
+    impl LanguageModel for UsageLlm2 {
+        fn provider(&self) -> &str { "budget-test" }
+        fn model_id(&self) -> &str { "budget-test" }
+        async fn do_generate(&self, _o: &CallOptions) -> Result<GenerateResult, aimux_core::error::AiMuxError> {
+            Err(aimux_core::error::AiMuxError::Other("stream-only".into()))
+        }
+        async fn do_stream(&self, _o: &CallOptions) -> Result<StreamResult, aimux_core::error::AiMuxError> {
+            let stream: std::pin::Pin<Box<dyn futures::Stream<Item = Result<StreamPart, aimux_core::error::AiMuxError>> + Send>> =
+                Box::pin(async_stream::stream! {
+                    yield Ok(StreamPart::StreamStart { warnings: Vec::new() });
+                    yield Ok(StreamPart::TextDelta { id: "t0".into(), delta: "hi".into(), provider_metadata: None });
+                    yield Ok(StreamPart::Finish {
+                        finish_reason: FinishReason { unified: FinishReasonUnified::Stop, raw: None },
+                        usage: Usage {
+                            input_tokens: TokenUsage { total: Some(100), no_cache: None, cache_read: None, cache_write: None, text: None, reasoning: None },
+                            output_tokens: TokenUsage { total: Some(50), no_cache: None, cache_read: None, cache_write: None, text: None, reasoning: None },
+                            raw: None,
+                        },
+                        provider_metadata: None,
+                    });
+                });
+            Ok(StreamResult { stream, request_body: None, response_headers: None })
+        }
+    }
+
+    let root = Ctx::root().unwrap();
+    use rutis_agent::llm_key;
+    let lm: Arc<dyn LanguageModel> = Arc::new(UsageLlm2);
+    root.provide_as(llm_key(), lm).unwrap();
+    let tools_view = root.plugin(ToolsPlugin::new(vec![]));
+    let driver_view = root.plugin(AgentDriverPlugin::new(8).with_token_budget(100));
+    soon(async {
+        (&tools_view).await.expect("tools");
+        (&driver_view).await.expect("driver");
+    })
+    .await;
+    let agent = root.get_as::<dyn Agent>(agent_key()).unwrap();
+
+    // 第一轮:单次 Finish 累计 150 > budget 100 → BudgetLimit(每 step 前检查,
+    // step1 时累计 0 不触发;step2 时累计 150 触发。单轮内第二次 step 中断)。
+    // 用 scripted(两条响应)让第一轮结束后再看——为稳定,这里直接断言
+    // 驱动后 session.tokens_used 至少 150,且后续 turn 检查触发。
+    let _ = agent.followup("go").await; // 第一轮累计 150
+    assert!(agent.session().tokens_used() >= 150, "累计超预算");
+
+    // 第二轮再驱动:step1 前检查累计 150 > 100 → BudgetLimit
+    let res2 = agent.followup("again").await;
+    match res2 {
+        Err(rutis_agent::AgentError::BudgetLimit { budget, used }) => {
+            assert_eq!(budget, 100);
+            assert!(used >= 100);
+        }
+        other => panic!("expected BudgetLimit on cross-turn over-budget, got {other:?}"),
+    }
+
+    soon(async {
+        driver_view.dispose().await.unwrap();
+        tools_view.dispose().await.unwrap();
+    })
+    .await;
+}

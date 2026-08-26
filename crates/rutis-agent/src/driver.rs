@@ -67,6 +67,9 @@ pub struct AgentDriver {
     status: StatusCell,
     cancel: Mutex<CancellationToken>,
     max_steps: usize,
+    /// 跨轮 token 预算(可选;None = 无上限,默认)。累计超过则中断(成本保护,
+    /// codex thread_goals 第二增量)。默认关闭保持向后兼容。
+    token_budget: Option<u64>,
     /// system prompt(minimal mode persona 等);None = 无 system 消息。
     /// Mutex:运行中可更新(self_persona 工具 / update_persona 方法)。
     system_prompt: Mutex<Option<String>>,
@@ -115,6 +118,7 @@ impl AgentDriver {
         max_steps: usize,
         system_prompt: Option<String>,
         session_path: Option<PathBuf>,
+        token_budget: Option<u64>,
     ) -> Self {
         let session = match &session_path {
             Some(p) => Session::restore(p), // 失败静默降级为新 Session
@@ -128,6 +132,7 @@ impl AgentDriver {
             status: StatusCell::idle(),
             cancel: Mutex::new(CancellationToken::new()),
             max_steps,
+            token_budget,
             system_prompt: Mutex::new(system_prompt),
             session_path,
             turn_lock: tokio::sync::Mutex::new(()),
@@ -307,6 +312,12 @@ impl AgentDriver {
             }
             if step >= self.max_steps {
                 return Err(AgentError::MaxSteps(self.max_steps));
+            }
+            if let Some(budget) = self.token_budget {
+                let used = self.session.lock().unwrap().tokens_used();
+                if used > budget {
+                    return Err(AgentError::BudgetLimit { budget, used });
+                }
             }
             step += 1;
 
@@ -1137,6 +1148,7 @@ pub struct AgentDriverPlugin {
     max_steps: usize,
     system_prompt: Option<String>,
     session_path: Option<PathBuf>,
+    token_budget: Option<u64>,
     inject_keys: Vec<TypeKey>,
 }
 
@@ -1146,8 +1158,17 @@ impl AgentDriverPlugin {
             max_steps,
             system_prompt: None,
             session_path: None,
+            token_budget: None,
             inject_keys: vec![llm_key(), tools_key()],
         }
+    }
+
+    /// 启用跨轮 token 预算上限(成本保护,codex thread_goals 第二增量)。
+    /// 默认关闭(向后兼容);开启后累计 tokens_used 超预算中断为
+    /// `AgentError::BudgetLimit`,成本硬保护。
+    pub fn with_token_budget(mut self, budget: u64) -> Self {
+        self.token_budget = Some(budget);
+        self
     }
 
     /// 静态 system prompt(minimal mode persona);每步作为 instructions 前置。
@@ -1202,6 +1223,7 @@ impl Plugin for AgentDriverPlugin {
                 self.max_steps,
                 self.system_prompt.clone(),
                 self.session_path.clone(),
+                self.token_budget,
             ));
             ctx.provide_as::<dyn Agent>(agent_key(), driver.clone())?;
             // 持久化路径服务:自我控制工具(`self_status`/`self_persist`)读取
