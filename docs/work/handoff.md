@@ -1047,3 +1047,18 @@ cwd-relative,已全修:
 
 **提交**:fc73d2a。**状态**:工作区净,全套绿。
 **下一步**:内核/dsh 边界或框架层继续,或技能库/文档沉淀,或维护。持续审视有结论。
+
+## 六十一、kernel bus 边界审读 + 完整 workspace 测试全景(自主续跑)
+
+- **bus(事件总线)边界审读**:hook 管理(on 注册/once 恰好一次/retain 移除/
+  dispose/waterfall)全部被 contract.rs 专项契约测试锁定(含 `once_once`,
+  recorder 断言 once 监听恰好触发一次;parity.rs 也有 events_ctx_once)。
+  边界健康,无缺口。内核约束侧不硬改。
+- **完整 workspace 测试全景**:{rutis-agent} + {rutis-dsh} + {rutis} 三个
+  crate 合计 **236 passed,0 failed**,含内核 contract 58/parity 57/dispatch_chain、
+  工具全 11 + 失败路径、driver 全边界。仅 1 ignored(real_backend 需 API key,
+  round44 已实测过)。基线全绿可作健康基准。
+
+**提交**:无(纯审读+确认,工作区净)。
+**状态**:工作区净,236 passed 全景绿。
+**下一步**:内核/dsh 继续或转向文档/维护。全景基准已确立。
