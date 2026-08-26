@@ -165,7 +165,9 @@ impl Session {
 
     /// 设置/更新待办(agent 记录下一步工作)。
     pub fn set_todo(&mut self, todo: String) {
-        self.todo = Some(todo);
+        // 空串 = 清除(工具宣称"Pass an empty string to clear")。
+        // 此前空串被存为 Some(""),重启后注入空待办,误导自动接续。
+        self.todo = if todo.is_empty() { None } else { Some(todo) };
     }
 
     /// 压缩:保存摘要,裁剪 messages 到最近 `keep` 条。

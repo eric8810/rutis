@@ -549,3 +549,82 @@ fn default_paths_are_cwd_independent_and_repo_rooted() {
         "ledger and handoff share repo-root docs/work parent"
     );
 }
+
+/// `self_todo` 功能测试:工具设置待办 → agent.session().todo() 更新
+/// (自动接续的基础数据)。此前仅有"被注册"验证,无功能锁定。
+#[tokio::test]
+async fn self_todo_sets_todo_on_session() {
+    let tmp = TempDir::new("todo");
+    let path = tmp.join("session.json");
+    let root = Ctx::root().unwrap();
+    let (tv, dv, _llm) = load_self_driver(&root, Some(&path), vec![LlmResponse::content("ok")])
+        .await;
+    let agent = root.get_as::<dyn Agent>(agent_key()).unwrap();
+    let _ = soon(agent.followup("start")).await.unwrap();
+
+    // 初始无 todo
+    assert!(agent.session().todo().is_none(), "fresh session: no todo");
+
+    // 工具设置 todo
+    let def = rutis_agent::self_todo(root.clone());
+    let (ok, out) = run(&def, json!({ "todo": "continue the task next" })).await;
+    assert!(ok, "{out}");
+    assert!(out.contains("todo updated"), "{out}");
+    assert_eq!(
+        agent.session().todo(),
+        Some("continue the task next"),
+        "todo persisted on session"
+    );
+
+    // 空串清除
+    let (ok2, out2) = run(&def, json!({ "todo": "" })).await;
+    assert!(ok2, "{out2}");
+    assert!(agent.session().todo().is_none(), "empty todo clears");
+
+    soon(async {
+        dv.dispose().await.unwrap();
+        tv.dispose().await.unwrap();
+    })
+    .await;
+}
+
+/// `self_compact` 功能测试:工具压缩 session(保存摘要 + 裁剪到 keep 条)。
+/// 此前仅有"被注册"验证,无功能锁定。
+#[tokio::test]
+async fn self_compact_trims_and_sets_summary() {
+    let tmp = TempDir::new("compact-tool");
+    let path = tmp.join("session.json");
+    let root = Ctx::root().unwrap();
+    // 多轮消息,使 messages 足够多再压缩
+    let (tv, dv, _llm) = load_self_driver(
+        &root,
+        Some(&path),
+        vec![LlmResponse::content("a"), LlmResponse::content("b"), LlmResponse::content("c")],
+    )
+    .await;
+    let agent = root.get_as::<dyn Agent>(agent_key()).unwrap();
+    let _ = soon(agent.followup("start")).await.unwrap();
+    let _ = soon(agent.followup("mid")).await.unwrap();
+    let _ = soon(agent.followup("end")).await.unwrap();
+    let before = agent.session().messages().len();
+
+    let def = rutis_agent::self_compact(root.clone());
+    let (ok, out) = run(&def, json!({ "summary": "early done", "keep": 3 })).await;
+    assert!(ok, "{out}");
+    assert!(out.contains("compacted session"), "{out}");
+    assert!(out.contains("kept last 3"), "{out}");
+
+    assert_eq!(agent.session().messages().len(), 3, "keep to 3 messages");
+    assert!(agent.session().messages().len() <= before, "strictly shrank or kept");
+    assert_eq!(
+        agent.session().summary().unwrap_or_default(),
+        "early done",
+        "summary set"
+    );
+
+    soon(async {
+        dv.dispose().await.unwrap();
+        tv.dispose().await.unwrap();
+    })
+    .await;
+}
