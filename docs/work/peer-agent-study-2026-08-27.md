@@ -173,3 +173,13 @@
 - **结论**:我的技能库机制足够;吸收了 codex 的"触发边界"纪律。skill 已固化
   self_tool。无需向量检索(记忆全量保留)。真差距进度:soft-trim 已修;
   子代理=远期已评估;信任边界=已判定归属 host 层。
+
+## 生产代码 panic 面审查(round 46)
+- **扫描** driver/tools 生产代码 44 处 unwrap/expect,排除测试模块后分类:
+  - `.lock().unwrap()`:Mutex 中毒防护。driver 已有工具 panic 边界
+    (tool_panic_is_fed_back)+ turn 级 rollback,锁在正常路径不 poison。
+    理论边缘风险,非实际,不改(避免动已验证安全代码)。
+  - `.expect(...)` 断言(测试模块内):断言不变量,正常。
+  - `Ctx::root()/provide_as/fiber await expect`:装配失败即时 fail,正确。
+- **结论**:生产 unwrap/expect 均被成熟机制(panic 边界 + rollback)保护,
+  无此需改为 Result/Error 的实质风险点。审查为确认性,非发现 bug。
