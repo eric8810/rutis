@@ -679,3 +679,19 @@ build 记录的是 2b42d03 因为那是 build 时的 HEAD;提交 167ff95 后台�
 
 **下一步**:真差距全排清后,转向① 深化其它研究(如 grok time-decay/首轮注入是否
   值得) ② 技能库/文档持续沉淀 ③ 持续维护(台账/全绿/健康)。使命保持。
+
+## 三十七、记忆体系收尾:time-decay + 首轮注入决策关闭(自主续跑)
+
+评估并**决策关闭** grok 记忆机制剩余两个开放项:
+- **首轮相关注入** → 已覆盖:driver 首轮已注入 summary + memory pointer + todo(均测试锁定
+  `compacted_session_injects_summary_into_prompt` / `restored_session_carries_memory_pointer`
+  / `todo_injected_into_prompt`)。todo 即 handoff 目标落地;skill 按需检索优于主动全注入。
+- **time-decay** → 不需要:我记忆全量保留 + 分代摘要,无检索排序需降权(旧代经 pointer/
+  summary 引用,非召回排名)。grok 需它因有向量检索召回。
+
+差距表记忆相关行全部关闭(混合检索无需 / 首轮注入已覆盖 / time-decay 不需要)。
+至此记忆/技能/信任边界/子代理真差距探索全部有明确归宿,差距表完全干净。
+**提交**:e635830。工作区净,全测绿(108 passed)。基线:记忆100%/热加载2/2/压缩保真100%vs0%。
+
+**下一步**:真差距探索已完成阶段性收束。转向① 深化其它grok机制(如 Dream/首轮注入外的)
+  或新研究 ② 技能库/文档持续沉淀 ③ 持续维护(台账/全绿/健康)。
