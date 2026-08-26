@@ -142,12 +142,9 @@ pub fn self_tools(ctx: Ctx) -> Vec<ToolDef> {
 /// cwd,子目录调起 CLI 也会换 cwd,相对路径会因找不到技能库而坏,见
 /// self-review-checklist 的 cwd 敏感警告)。回退到相对路径以兼容非 cargo 部署。
 fn skills_index_path() -> std::path::PathBuf {
-    let manifest_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let repo_relative = manifest_root.join("../../docs/skills/index.md");
-    if repo_relative.exists() {
-        return repo_relative;
-    }
-    std::path::PathBuf::from("docs/skills/index.md")
+    // 复用 repo_root_path(round50 改进:parent().exists() + 回退相对),
+    // 消除 round48 各自实现的重复,避免两个 helper 的 exists() 语义不一致。
+    repo_root_path("docs/skills/index.md")
 }
 
 pub fn skill() -> ToolDef {
