@@ -80,7 +80,7 @@
 | rutis 内核 | contract(契约断言)+ parity(对等)+ dispatch_chain + probe | 58 + 57 + 2 |
 | rutis-agent | lib(driver 边界)+ integration(装配/门控)+ minimal(工具)+ unit_loop(sanitize/rollback/max_steps)+ self_tools(11 工具全功能)+ session_persist(记忆/压缩/持久化)+ self_driven + self_iteration(热加载)+ 其它 | 19+7+25+15+14+21+3+3+... |
 | rutis-dsh | llm_seam(4)+ llm_e2e(1) | 5 |
-| **合计** | **236 passed / 0 failed** | |
+| **合计** | **240 passed / 0 failed** | |
 
 **补充实证**:
 - 实机 e2e(真实 DEEPSEEK):`real_backend` 通过(round44,3.83s,调工具+多轮连续)——非 mock。
