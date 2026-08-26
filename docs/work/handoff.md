@@ -938,3 +938,16 @@ cwd-relative,已全修:
 
 **提交**:e2bedee。**状态**:工作区净,全套绿。
 **下一步**:其它真实问题/工具边界 / 持续维护。假绿扫描闭环+技能库反映最新。
+
+## 五十三、session 路径宿主判定 + 路径 helper 消重(自主续跑)
+
+- **driver session 路径宿主分层判定**:cwd 相对 session 是**正确行为**(运行时数据
+  每项目一 session,非 bug),区别于 skill/ledger/handoff 固定仓库文档依赖;
+  默认 None + 宿主显式 with_session_path。CLI 用法确认合理。记录避免反复纠结。
+- **真实小重构**:skills_index_path(round48)与 repo_root_path(round50)逻辑重复,
+  skill 的用 exists() 而 repo_root 用 parent().exists()+回退,存在不一致。
+  统一 skills_index_path 复用 repo_root_path,消除重复+语义统一。skill 测试仍读
+  SKILL-U1。self_tools 12/12。
+
+**提交**:5e04603(判定) + 8e86662(重构)。**状态**:工作区净,全套绿。
+**下一步**:其它真实问题/边界 / 技能库沉淀 / 维护。持续找真问题不空转。
