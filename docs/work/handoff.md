@@ -904,3 +904,20 @@ cwd-relative,已全修:
 
 **提交**:c7f6b1e。self_tools 12/12,全套绿。**状态**:工作区净。
 **下一步**:其它真实 bug/工具边界 / 技能库沉淀 / 维护。cwd 敏感已系统查清闭环。
+
+## 五十一、消除 hotplug 测试假绿(shift to another real issue class)(自主续跑)
+
+承接 cwd 扫描闭环(round50),转向**另一类真实问题:测试假绿隐患**。
+- **发现**:两个 hotplug 端到端测试(self_iteration_loop_persona_plus_hotplug /
+  hotplug_load_then_call_is_end_to_end)在 .so 未构建时**静默 skip-return**
+  (eprintln "skip: not built")——若 CI/新环境没先 cargo build -p
+  rutis-hotplug-demo,核心 hotplug 能力"没测也显示 ok"。正撞
+  self-review-checklist §1 "eprintln skip = 没测的红信号"。
+- **修复**:抽共享 `ensure_hotplug_plugin()`(CARGO_MANIFEST_DIR→仓库根定位 .so;
+  缺失自动快速 build ~0.8s;断言存在)。替换两处 skip.
+- **实证非假绿**:临时隐藏 .so → 测试自动构建仍 2/2 通过(0.24s),走构建路径。
+- 全量测试绿,仅测试文件改动。
+
+**提交**:9ed7c3c。**状态**:工作区净。
+**下一步**:其它真实问题(cwd bug 3点已闭环 + hotplug 假绿已修)→ 更多边界/
+  长线 / 技能库沉淀 / 维护。纪律:continue finding real issues, not空转。
