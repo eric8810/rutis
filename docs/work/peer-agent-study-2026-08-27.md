@@ -183,3 +183,14 @@
   - `Ctx::root()/provide_as/fiber await expect`:装配失败即时 fail,正确。
 - **结论**:生产 unwrap/expect 均被成熟机制(panic 边界 + rollback)保护,
   无此需改为 Result/Error 的实质风险点。审查为确认性,非发现 bug。
+
+## 自主驱动引擎(SelfDriven)机制审读(round 47)
+- **语义确认**:SelfDriven = "永不停止 + 智能调频"。backoff(200ms base→30s max)
+  按失败 streak(FAIL_DECAY=3 指数退避)/ 有产出(恢复高频)/ 无产出(降频)动态调。
+  但**永不死**——`stops_when_no_progress` 防的是"消息不增长时空转",非"停机"。
+- **测试已锁**:self_activates_without_todo(激活)/ stops_when_no_progress(防空转)/
+  auto_activation_turns_are_not_cancelled(turn_lock)。核心语义行为级覆盖。
+- **backoff 数值是否补测试**:不补。需暴露内部 AtomicUsize(破坏封装 + 绑调谐
+  常量脆弱);已有"消息不无限增长"行为断言兜底空转保护。判定:过度测试,不做。
+  同 round45 纪律:不为做而做。
+- **结论**:SelfDriven 语义健康,与 round44 实机 + round45 guard 测试一致,无待力改。
