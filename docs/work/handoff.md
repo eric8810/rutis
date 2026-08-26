@@ -730,3 +730,19 @@ build 记录的是 2b42d03 因为那是 build 时的 HEAD;提交 167ff95 后台�
 **提交**:4cdb1d0(gate test + study 实证标注)。
 **状态**:工作区净,integration 6/6。差距表 hooks 行 = 实证锁定。
 **下一步**:继续研究深化/新对象 × 技能库/文档沉淀 × 维护(台账/全绿/健康)。
+
+## 四十、三段管线完整实证:钩子双边锁定(自主续跑)
+
+延续 round39 hooks 实证,补全 **PostToolUse 半边**:
+- 新增 `integration.rs::post_execute_can_rewrite_result`:注册 ToolPostExecute
+  waterfall listener 改写 get_weather 结果为 REDACTED → 断言模型看到改写值、
+  敏感原值 SENSITIVE_RAW 不达 session(成功脱敏)。
+- 至此三段管线对 grok hooks **双钩子完整实证**:pre-execute(拒绝,round39)
+  = PreToolUse;post-execute(改写,本=round) = PostToolUse。integration 7/7。
+- 这补全"三段管线等价覆盖 grok hooks"的完整证据链(test-backed 而非判断)。
+
+**提交**:dbb5c73(post-execute test + study note)。
+**状态**:工作区净,integration 7/7,单元19+unit_loop15 仍绿。差距表 hooks 行 =
+  Pre+Post 双实证锁定。
+**下一步**:继续深化研究(worktrees/Dream/session-archival 或新对象) × 技能库
+  沉淀 × 维护(台账/全绿/健康)。使命:研究他人→量化自身→比别人好。
