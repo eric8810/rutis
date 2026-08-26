@@ -20,14 +20,12 @@ where
         .expect("timed out")
 }
 
-/// 完整闭环:先 hotplug_load 挂载新工具(从 .so),再 self_persona 更新认知,
-/// 再确认后续 turn 能看到新工具 + 新 persona。
-#[tokio::test]
-async fn self_iteration_loop_persona_plus_hotplug() {
-    // 先构建插件 .so(测试前置:需要 librutis_hotplug_demo.so)。
-    // 产物在**仓库根** target/ 下,CARGO_MANIFEST_DIR 是本期 crate 的绝对路径
-    // (/…/crates/rutis-agent),往上级两级即仓库根(/…/rutis)——cwd 无关,
-    // CI/任意目录都正确定位,不会像原相对路径那样在别处 cwd 下误 skip。
+
+/// 获取 hotplug demo 插件路径;缺失则自动快速构建(~0.8s)。
+/// 假绿防线:hotplug 测试前置需真实 .so,若无则静默 skip 会让"没测也 ok"
+/// (self-review-checklist §1: eprintln skip 是没测的红信号)。这里改为
+/// 自动构建 + 断言存在,使 CI/任意新环境都真实运行。
+fn ensure_hotplug_plugin() -> String {
     let repo_root = {
         let m = env!("CARGO_MANIFEST_DIR");
         let p = std::path::Path::new(m);
@@ -38,9 +36,34 @@ async fn self_iteration_loop_persona_plus_hotplug() {
         .to_string_lossy()
         .into_owned();
     if !std::path::Path::new(&so).exists() {
-        eprintln!("skip: {so} not built (run cargo build -p rutis-hotplug-demo)");
-        return;
+        eprintln!("[hotplug-test] .so missing, auto-building rutis-hotplug-demo (fake-green guard)...");
+        let status = std::process::Command::new("cargo")
+            .args(["build", "-p", "rutis-hotplug-demo"])
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .status()
+            .expect("cargo available");
+        assert!(
+            status.success(),
+            "failed to pre-build rutis-hotplug-demo for hotplug e2e test"
+        );
     }
+    assert!(
+        std::path::Path::new(&so).exists(),
+        "hotplug demo plugin must exist after pre-build: {so}"
+    );
+    so
+}
+
+/// 完整闭环:先 hotplug_load 挂载新工具(从 .so),再 self_persona 更新认知,
+/// 再确认后续 turn 能看到新工具 + 新 persona。
+#[tokio::test]
+async fn self_iteration_loop_persona_plus_hotplug() {
+    // 先构建插件 .so(测试前置:需要 librutis_hotplug_demo.so)。
+    // 产物在**仓库根** target/ 下,CARGO_MANIFEST_DIR 是本期 crate 的绝对路径
+    // (/…/crates/rutis-agent),往上级两级即仓库根(/…/rutis)——cwd 无关,
+    // CI/任意目录都正确定位,不会像原相对路径那样在别处 cwd 下误 skip。
+    // cargo 根定位 + 自动构建(假绿防线),见 ensure_hotplug_plugin。
+    let so = ensure_hotplug_plugin();
 
     let root = Ctx::root().unwrap();
     let llm = Arc::new(ScriptedLlm::new(vec![
@@ -100,19 +123,8 @@ async fn self_iteration_loop_persona_plus_hotplug() {
 #[tokio::test]
 async fn hotplug_load_then_call_is_end_to_end() {
     // 定位 .so(与既有测试同法:CARGO_MANIFEST_DIR 往上级两级 = 仓库根)
-    let repo_root = {
-        let m = env!("CARGO_MANIFEST_DIR");
-        let p = std::path::Path::new(m);
-        p.parent().unwrap().parent().unwrap()
-    };
-    let so = repo_root
-        .join("target/debug/librutis_hotplug_demo.so")
-        .to_string_lossy()
-        .into_owned();
-    if !std::path::Path::new(&so).exists() {
-        eprintln!("skip: {so} not built (run cargo build -p rutis-hotplug-demo)");
-        return;
-    }
+    // cargo 根定位 + 自动构建(假绿防线),见 ensure_hotplug_plugin。
+    let so = ensure_hotplug_plugin();
 
     let root = Ctx::root().unwrap();
     // turn1 hotplug_load;turn2 调用 release_notes;turn3 结束
