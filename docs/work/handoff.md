@@ -921,3 +921,20 @@ cwd-relative,已全修:
 **提交**:9ed7c3c。**状态**:工作区净。
 **下一步**:其它真实问题(cwd bug 3点已闭环 + hotplug 假绿已修)→ 更多边界/
   长线 / 技能库沉淀 / 维护。纪律:continue finding real issues, not空转。
+
+## 五十二、假绿系统扫描结论 + 技能库沉淀(自主续跑)
+
+**假绿候选系统扫描**(round51 修 hotplug 后,全测试集确认无其它假绿):
+- agent 测试:仅 real_backend 的 `#[ignore]`+key skip(合法显式跳,round44 实测过)。
+- dsh 测试:仅 llm_e2e 的 RUTIS_SKIP_NODE_E2E env 门控(显式红——缺 host/
+  node_modules 会 assert 失败而非静默;当前 node_modules 存在真跑 ok 0.15s,
+  是真启动 node/tsx 宿主的 TS e2e)。
+- 确认 ensure_hotplug_plugin 内 if-exists 是自动构建(非 skip)。
+- **结论**:测试集诚实性已通过系统扫描确认,无其它假绿。
+
+**技能库沉淀**:SKILL-U2 增强——纳入"依赖外部产物(插件.so/npm/API key)测试
+  判别 + 自动构建做法"(round51 洞察):静默 skip=假绿→自动构建+断言存在;环境缺
+  fail=显式红→不改。
+
+**提交**:e2bedee。**状态**:工作区净,全套绿。
+**下一步**:其它真实问题/工具边界 / 持续维护。假绿扫描闭环+技能库反映最新。
