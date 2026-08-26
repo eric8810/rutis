@@ -1347,3 +1347,18 @@ TS bridge 为例。与 round73 SKILL-U2 同为实操→方法论的沉淀,防未
 
 **提交**:无代码改动。**状态**:工作区净,基线全绿。
 **下一步**:维持(全绿/健康/持久化)/ 持续激活,工作区一变即有可做。
+
+## 七十九、实机 e2e 基线本代独立重验(真实 DEEPSEEK,round78 补强)(自主续跑)
+
+round78 基线实证中"实机 e2e"此前依赖 round44 历史记录。本轮检测到本机有
+  DEEPSEEK_API_KEY,遂**本代会话独立重跑**:
+- `cargo test -p rutis-agent --test real_backend -- --ignored`
+  → `real_backend_multi_turn_with_tool ... ok`,2.40s。
+  真实 deepseek-chat 调用 get_weather 工具 + 多轮 history 连续,非 mock。
+- 同时验证 real_backend guard 正确:有 key 就实测跑通,#[ignore]+显式 skip(缺 key
+  显式红非静默)。M2-1 判别健全。
+
+=> todo 声称的"实机 e2e"基线现有了**本代会话实测**证据(非仅 round44 历史)。
+
+**提交**:无代码改动。**状态**:工作区净,240 基线绿。
+**下一步**:维持(全绿/健康/持久化)/ 审视新方向;基线全绿且有本代实证。
