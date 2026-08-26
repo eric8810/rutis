@@ -4,11 +4,13 @@
 //! - 未注册服务 / 未知方法按 RemoteError 分类;
 //! - hello 能力集从注册表推导。
 
+use std::pin::Pin;
 use std::sync::Arc;
 
-use aimux_llm::{AimuxLlm, LlmService};
+use aimux_core::stream_part::StreamPart;
+use aimux_llm::{AimuxLlm, LlmService, LlmServiceError};
 use rutis_cordis::{
-    Bridge, BridgeConfig, ExpectedHost, Frame, MemoryWire, ServiceDispatch, Wire,
+    Bridge, BridgeConfig, CordisService, ExpectedHost, Frame, MemoryWire, ServiceDispatch, Wire,
 };
 use rutis_dsh::LlmFace;
 use serde_json::json;
@@ -94,7 +96,7 @@ impl aimux_core::language_model::LanguageModel for ChunkedLlm {
 }
 
 async fn start(dispatch: &Arc<ServiceDispatch>, wire: MemoryWire) -> Bridge {
-    let mut bridge = Bridge::start(
+    let bridge = Bridge::start(
         Box::new(wire),
         BridgeConfig::default(),
         dispatch.hooks(),
@@ -210,4 +212,79 @@ async fn hello_caps_derive_from_the_registry() {
     }
     let dispatch = ServiceDispatch::new(vec![LlmFace::new(chunked_service()), Arc::new(Echo)]);
     assert_eq!(dispatch.names(), vec!["echo".to_string(), "llm".to_string()]);
+}
+
+
+/// 固定的最小 LlmService:stream 回单条文本,list_models 回固定模型。
+/// 用于稳定测 LlmFace 边界(不依赖 aimux_providers 的真实 provider 路由)。
+struct FakeLlm;
+#[async_trait::async_trait]
+impl aimux_llm::LlmService for FakeLlm {
+    async fn stream(
+        &self,
+        _req: aimux_llm::StreamRequest,
+    ) -> Result<PartStream, LlmServiceError> {
+        let stream: PartStream = Box::pin(async_stream::stream! {
+            use aimux_core::stream_part::StreamPart;
+            use aimux_core::types::{FinishReason, FinishReasonUnified, Usage};
+            yield Ok(StreamPart::StreamStart { warnings: Vec::new() });
+            yield Ok(StreamPart::TextDelta { id: "text-0".into(), delta: "hi".into(), provider_metadata: None });
+            yield Ok(StreamPart::Finish { finish_reason: FinishReason { unified: FinishReasonUnified::Stop, raw: None }, usage: Usage::default(), provider_metadata: None });
+        });
+        Ok(stream)
+    }
+    async fn list_models(
+        &self,
+        _provider: &str,
+        _api_key: Option<&str>,
+    ) -> Result<Vec<aimux_llm::ModelBrief>, LlmServiceError> {
+        Ok(vec![aimux_llm::ModelBrief { id: "mock-1".into(), owned_by: Some("rutis".into()), created: Some(1) }])
+    }
+}
+type PartStream = Pin<Box<dyn futures::Stream<Item = Result<StreamPart, LlmServiceError>> + Send>>;
+
+/// LlmFace 边界:listModels 形状转换 + stream 非法 params 的清晰错误(而非 panic)。
+#[tokio::test]
+async fn llm_face_list_models_and_illegal_stream_params_are_handled() {
+    let face = LlmFace::new(Arc::new(FakeLlm));
+
+    // listModels 正常:provider 默认 & apiKey 可选,返回 models 数组
+    // FakeLlm 返回固定 1 个模型,且后端 id=provider, from_value 保留形状
+    let v = match face.call("listModels", json!({})).await {
+        Ok(rutis_cordis::ServiceReply::Value(v)) => v,
+        _ => panic!("listModels should return Value(models)"),
+    };
+    let models = v.get("models").and_then(serde_json::Value::as_array);
+    assert!(models.is_some(), "models key present: got {v}");
+    assert_eq!(models.unwrap().len(), 1, "one mock model");
+
+    let v2 = match face
+        .call("listModels", json!({ "provider": "local", "apiKey": "k" }))
+        .await
+    {
+        Ok(rutis_cordis::ServiceReply::Value(v)) => v,
+        _ => panic!("listModels(provider/apiKey) should return Value(models)"),
+    };
+    assert!(v2.get("models").and_then(serde_json::Value::as_array).is_some());
+
+    // stream:空 params 因 serde(default) 成功构造 → Stream reply
+    let reply = match face.call("stream", json!({})).await {
+        Ok(r) => r,
+        Err(e) => panic!("empty stream params use serde(default), should succeed: {:?}", e),
+    };
+    assert!(matches!(reply, rutis_cordis::ServiceReply::Stream(_)));
+
+    // stream:类型不匹配的 params → from_value 反序列化失败 → 清晰 RemoteError,不 panic
+    let err = match face.call("stream", json!({ "options": { "messages": "not-an-array" } })).await {
+        Err(e) => e,
+        Ok(_) => panic!("type-mismatched stream params must err"),
+    };
+    assert!(!err.code.is_empty(), "error code should be non-empty, got {:?}", err);
+
+    // 未知方法仍是 unhandled 分类
+    let err = match face.call("nope", json!({})).await {
+        Err(e) => e,
+        Ok(_) => panic!("unknown method must err"),
+    };
+    assert_eq!(err.code, "unhandled");
 }

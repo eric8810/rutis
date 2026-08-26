@@ -93,28 +93,26 @@ async fn up() {
     {
         Ok(child) => child,
         Err(direct) => {
+            let fail_msg = || {
+                eprintln!("[rutis-dsh] cannot spawn {dsh_display}: {direct}");
+                eprintln!("[rutis-dsh] install the official CLI (npm i -g @deepseek-ai/dsh) or set RUTIS_DSH_BIN");
+                std::process::exit(1)
+            };
             // Windows:npm 全局命令是 .cmd shim(CreateProcess 只认 .exe),
             // 经 cmd /c 解析 PATH 里的 shim。RUTIS_DSH_BIN 显式多段
             // (node bin.js)不经此层。
-            let mut via_cmd = tokio::process::Command::new("cmd");
             #[cfg(windows)]
             {
+                let mut via_cmd = tokio::process::Command::new("cmd");
                 via_cmd.arg("/c").args(&dsh_command);
                 match via_cmd.env("RUTIS_BRIDGE_PORT", port.to_string()).spawn() {
                     Ok(child) => child,
-                    Err(_) => {
-                        eprintln!("[rutis-dsh] cannot spawn {dsh_display}: {direct}");
-                        eprintln!("[rutis-dsh] install the official CLI (npm i -g @deepseek-ai/dsh) or set RUTIS_DSH_BIN");
-                        std::process::exit(1)
-                    }
+                    Err(_) => fail_msg(),
                 }
             }
             #[cfg(not(windows))]
             {
-                let _ = via_cmd;
-                eprintln!("[rutis-dsh] cannot spawn {dsh_display}: {direct}");
-                eprintln!("[rutis-dsh] install the official CLI (npm i -g @deepseek-ai/dsh) or set RUTIS_DSH_BIN");
-                std::process::exit(1)
+                fail_msg()
             }
         }
     };
