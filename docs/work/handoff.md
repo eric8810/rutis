@@ -1362,3 +1362,19 @@ round78 基线实证中"实机 e2e"此前依赖 round44 历史记录。本轮检
 
 **提交**:无代码改动。**状态**:工作区净,240 基线绿。
 **下一步**:维持(全绿/健康/持久化)/ 审视新方向;基线全绿且有本代实证。
+
+## 八十、落地功能回归锁定确认 + 收敛(自主续跑)
+
+审视新方向时,实测确认我 round63-65 落地的前瞻功能均有独立测试锁定(防回归):
+- **token 累计**:`session_persist::tokens_used_accumulates_and_survives_restart`
+  (+旧文件兼容→0, saturating→u64::MAX)。
+- **token 预算中断**:`token_budget_limit_interrupts_turn`(with_token_budget(100),
+  LLM 返回 150>100 → AgentError::BudgetLimit,断言 budget=100 + 第二轮跨轮再检查)。
+- 另核实 driver soft_trim 标记 `…[trimmed N chars…]` 是自洽紧凑格式(两省略号夹
+  中间),非缺括号——差点为不存在格式问题动手,已核实收敛。
+
+=> 落地功能(test_bounded)均有回归保护;系统全面健康、连续 8 轮代码层稳定
+  = 转轨工程达稳定态的健康信号(非空转)。
+
+**提交**:无代码改动。**状态**:工作区净,240 基线绿。
+**下一步**:维持(全绿/健康/持久化)/ 持续激活;工作区一变即有可做。
