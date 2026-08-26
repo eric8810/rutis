@@ -779,3 +779,22 @@ build 记录的是 2b42d03 因为那是 build 时的 HEAD;提交 167ff95 后台�
 
 **状态**:工作区净,编译零警告。差距表记忆/技能/信任/子代理/hooks/Dream/sessions
   全有归宿。下一步:worktrees/session-archival/新对象 研究 × 技能库沉淀 × 维护。
+
+## 四十三、转向仓库真实工程:补 dsh 边界测试 + 清技债(自主续跑)
+
+**主动转出"研究对照"循环,做仓库真实可改进点**(回应用户点醒"别空转"):
+1. **补 rutis-dsh 边界测试** `llm_face_list_models_and_illegal_stream_params_are_handled`
+   (FakeLlm 稳定隔离,不依赖 aimux_providers):
+   - listModels 形状转换(provider 默认 + apiKey 可选)
+   - stream 空 params(serde default 成功)→ Stream reply
+   - stream 类型不匹配 params → 清晰 RemoteError(不 panic)
+   - 未知方法 → unhandled 分类
+   → 补上了 dsh 未覆盖的真实调用面板边界。llm_seam 4/4。
+2. **清理两个既有警告**:
+   - bin cfg-conditional `mut via_cmd`(非 Windows 不创建)→ 重构为 fail_msg 闭包
+   - test unused-mut `bridge` → 去 mut
+   → 编译零警告(rutis-dsh 也干净)。
+
+**提交**:cb47032。**状态**:工作区净,llm_seam 4/4 + unit_loop 15 绿,零警告。
+
+**下一步**:继续仓库真实改进(如我自审清单里的长线:id=1 早期有"tech debt 扫描"待办、或 dsh 更多边界) × 维护(台账/全绿/健康)。研究转轨已充分,回到做真实工程。
