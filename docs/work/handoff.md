@@ -1282,3 +1282,18 @@ TS bridge 为例。与 round73 SKILL-U2 同为实操→方法论的沉淀,防未
 
 **提交**:SKILL-E2 增补。**状态**:工作区净，240 基线绿。技能库 17 SKILL。
 **下一步**:① 技能沉淀已沉淀 U2+E2 两处真实缺口,可转其它 SKILL 审查或维护 ② 维护。
+
+## 七十五、技能库沉淀:SKILL-U1 增补 240 基线 crate 口径注记(round71 踩坑固化)(自主续跑)
+
+延续 round73/74 技能沉淀。审视发现 SKILL-U1(清单自审)缺少"跑健康/基线测试的 crate
+口径"纪律——round71 我因用 rutis-cordis 当"工作区三 crate"跑全量,看到 host_cordis
+(缺外部 checkout)假红,误判为 bug。已沉淀注记:
+- 跑健康/基线测试务必用 `rutis-agent + rutis-dsh + rutis`,勿用 rutis-cordis;
+- 240 基线 = agent118 + dsh5 + rutis117;
+- 用错 crate 会看到集成测试假红误判(round71 亲身踩坑)。
+
+至此技能库沉淀三处实操缺口(U2 #[ignore] 判别 / E2 反向漂移 / U1 基线口径),
+都是 round70-74 实战提炼、各自有具体例证,非造条目。
+
+**提交**:SKILL-U1 增补。**状态**:工作区净，240 基线绿。技能库 17 SKILL。
+**下一步**:① 技能沉淀三缺口(U1/U2/E2)已补,SKILL 审查充分,可转维护 ② 维护。
