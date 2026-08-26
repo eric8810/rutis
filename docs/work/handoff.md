@@ -554,3 +554,23 @@ than 2 entries",我的自我迭代回滚保障不可用(若 persona/工具/hotpl
 learning/Cline planner)。下一步 = 对外对标调研 + 把先进实践引入自身。
 
 **提交**:7a8f687(实验1测试) + 1a51d6e(基线表)
+
+## 三十、研究他人→增强自己落地(peer-study + skills 库)
+
+**用户再次点醒**:我对自我没有规划/设计/实验;使命要求参考研究他人、最终比别人好。
+
+**行动(转轨)**:
+1. 重读 agent-bench-standards(业界基准调研),发现"实验从未执行"→
+   **跑了实验 1 记忆保持率 = 100%**,建立基线表。
+2. 研究本机**真实 agent**:grok(MEMORY.md/trusted_folders/hooks)、
+   codex(memories/*goals/skills/state sqlite)→ docs/work/peer-agent-study。
+   对比出我最大缺口:**无显式技能库**(能力全硬编码)→ 落地。
+3. **建技能库** docs/skills/index.md(Codex skills 启发):把散落方法论
+   (审查/记忆/回滚/漂移/外部对标/CI/热插拔)组织为可检索 SKILL 索引。
+4. 热加载 `skill` 检索工具 → 技能库运行时可用。
+
+**使命落地**:从"内部小修小补"转向"向外研究 + 量化自身 + 技能化组件"。
+这才是"工程/环境/迭代最好的 agent"该有的演进方式。
+
+**提交**:28b0aa8(skills 库 + peer-study)
+**当前工程状态**:工作区干净,全测绿,技能库可用,实验1基线 100%。
