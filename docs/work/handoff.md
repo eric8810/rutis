@@ -387,3 +387,18 @@ minimal_tools + self_tools + ReloadHandler(SelfReloadRequested) + SelfDriven。
 => 记录"此刻无事可做"→ 降频待命,保持检查。
 记忆增长约 43 条/轮,须在 >800 前 compact(预计 round ~22 前)。
 本轮产出:完整自审 + 记忆增长率观测 + 降频。
+
+## 十九、清单自审 round 19:全绿降频(自主续跑 #9)
+
+按 checklist(含 §4.5)第 9 次执行:
+- [0] 工作区净 + session persist(was 226)
+- [1] agent 全绿(13 ok)无 skip/FAILED
+- [2] 技术债无信号
+- [3] tui(2502077, 17.7%cpu)活着
+- [4] 记忆:226 条健康,约 14 条/轮增长(<800 待 round~22)
+- [4.5] 漂移:按归属文件匹配无漂移(session.rs sanitize/truncate 4;driver.rs auto_compact 3 + turn_lock 3)
+- [5] 空转:全绿无新增改点,长线两条仍不做
+
+=> 记录"此刻无事可做"→ 降频待命,保持检查。
+平滑现状:记忆约 14 条/轮,`round~22` 前到 800 才 compact。
+本轮产出:完整自审 + 确认漂移检查模式须按归属文件 grep(避免误报)。
