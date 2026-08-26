@@ -51,6 +51,11 @@
 - **SKILL-W1 CI 自动化** — `../work/ci-automation-2026-08-25.md`
 - **SKILL-W2 督工/热重载** — `../work/supervisor-hot-reload-2026-08-25.md`
 - **SKILL-W3 热插拔插件** — `../work/hotplug-dylib-2026-08-25.md`
+- **SKILL-W4 写功能测试找真实 bug** — 对"仅注册/仅预期"的工具/路径先写**真实执行的功能
+  测试**(经真实驱动而非 mock 断言),测试失败即暴露真实语义 bug。
+  高效路径:round55 给 self_todo 写功能测试 → 暴露"empty clears"实际存 Some("")
+  的空串不清除 bug;给 self_compact 补功能测试补齐空白。适合:有实现但测试只
+  到"注册可见"层的对象。
 
 ## 使用约定
 - 新能力/方法论落地 → 在此登记一个 SKILL 条目(何时用/怎么做/到哪看)
