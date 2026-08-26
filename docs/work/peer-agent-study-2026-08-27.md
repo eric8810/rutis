@@ -26,8 +26,11 @@
    最快借鉴:用 self_hotload 动态注册的可复用技能,或一个 docs/skills 索引。
 2. **记忆分层**:我只有 session + summary;Codex memories/goals/state 分离。
    但我的记忆指针 + 高质量摘要已证实有效(记忆保持率 100%)。
-3. **信任边界**:Grok trusted_folders 显式标识可写路径。我没有。虽有
-   bash/replace_text 无越界意识。→ 潜在安全增强。
+3. **信任边界**:Grok trusted_folders 显式标识可写路径 + 分级 sandbox
+   (off/workspace/read-only/strict)+ 敏感路径(~/.ssh/aws/gnupg)始终写保护。
+   → **已研究判定(round34)**:该边界属于 **host(cli)层** 职责,不是 agent crate
+   重复实现的(同 supervisor 属 cli 层,一致治理纪律)。agent 层已具的自觉是自审
+   清单 "cwd 敏感路径拦截"。不重造 host 沙箱(避免过度工程)。
 
 ## 结论:最值得当前落地
 - **技能库化**(借鉴 Codex skills):让自我能力不只硬编码,而是可检索、可复用、
