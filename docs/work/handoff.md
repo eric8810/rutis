@@ -281,3 +281,27 @@ CRABGO_MANIFEST_DIR 定位(往上级两级 = 仓库根,固定 crates/ 布局),cw
 
 自救要区分:同一类"测试不完整"不能一刀切修。假绿的"修成正"用在显式红上
 反而会制造新假绿。诚实的红 > 沉默的绿(假绿)。
+
+## 十三、git log + 宿主装配审视(自主续跑 #3)
+
+### git log 健康度
+91 提交,无 revert/hack/wip/dirty 信号,无空提交。两处 fix 值得留意:
+- `f82fbcf` bridge 崩溃修复:丢 channel 不再崩宿主(诊断自真实线上会话)。
+- `6ca62b4` 缺 API key 不再阻塞启动。
+皆高质量,非技术债。
+
+### bridge 崩溃修复的测试覆盖缺口
+`f82fbcf` 的健壮性逻辑主要在 `host/src/bridge.ts`(TS:socket error/close →
+mark dead → bridgeDisconnected)。Rust cargo 测试够不着,当前**无 JS 测试**锁定。
+属长线可选(需 node+模拟 socket 基建),热路径不必急。
+
+### 宿主装配确认
+我真实运行在 `examples/tui`(进程 2502073),装配完整(tui.rs:80-101):
+minimal_tools + self_tools + ReloadHandler(SelfReloadRequested) + SelfDriven。
+改过的 driver/auto/session 用它构建正常。dsh 是另一条线(TS host)。
+=> 待办"审视 dsh 宿主装配"结论:tui 已是我完整宿主,无需改;
+   rutis-dsh 的 bridge TS 测试为长线可选。
+
+### 收敛
+全仓库绿(agent 全绿;cordis 红为刻意 fail-on-missing-env);工作区干净。
+现状降频待命。
