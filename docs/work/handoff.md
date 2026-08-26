@@ -869,3 +869,21 @@ build 记录的是 2b42d03 因为那是 build 时的 HEAD;提交 167ff95 后台�
   非审读空转。
 
 **提交**:e5846f1。**状态**:工作区净,self_tools 11/11,编译零警告。
+
+## 四十九、真实 bug 修复#2:version-ledger cwd 无关(影响 rollback 保障)(自主续跑)
+
+承接 round48 skill cwd 修复,系统扫描发现**第二个同类 bug**:
+- **bug**:`VERSION_LEDGER_PATH = "docs/work/version-ledger.json"`(runtime-cwd 相对)。
+  self_build(写台账)/ self_rollback(读台账)在非仓库根 cwd 下(如部署 agent
+  从别处启动)会读写错误位置 → **回滚保障可能读到不存在/错误的台账**。
+  比 skill 更关键 ∵是安全/回滚机制。
+- **修复**:`default_ledger_path()`(CARGO_MANIFEST_DIR→仓库根,失败回退相对);
+  不经 `exists()`(首次创建时文件没有仍应落仓库根),检查父目录是否存在。
+- **self_build 加 args[ledger] 覆盖**:测试注入 temp ledger,避免污染真实台账
+  (验证真实台账 5 条 intact,last 2bf0b3d)。
+- **测试更新**:self_build_runs_command_and_records_ledger 用 TempDir 隔离,
+  验证 [ledger] recorded + 幂等。self_tools 11/11,全套绿。
+
+**提交**:3598628。**状态**:工作区净。
+**基线**:记忆100%/热加载2/2/压缩保真100%vs0% + 实机 e2e 通过。
+**下一步**:继续 cwd 敏感系统扫描(已找 skill+ledger 两点)/其它真实 bug / 维护。
