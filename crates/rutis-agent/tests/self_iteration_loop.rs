@@ -173,3 +173,27 @@ async fn hotplug_load_then_call_is_end_to_end() {
     let _ = driver_view.dispose().await;
     let _ = tools_view.dispose().await;
 }
+
+/// hotplug_load 失败路径:路径不存在/加载失败 → 工具返回清晰 error
+/// (而非 panic/挂起)。此前只有成功路径(已构建 .so)测试。
+#[tokio::test]
+async fn hotplug_load_nonexistent_path_reports_error() {
+    let root = Ctx::root().unwrap();
+    // 装配 ToolsPlugin 提供 ToolRegistry(hotplug_load 从 ctx 取)
+    let tools_view = root.plugin(ToolsPlugin::new(vec![]));
+    (&tools_view).await.unwrap();
+
+    let def = rutis_agent::hotplug_load(root.clone());
+    let res = (def.run)(json!({ "path": "/nonexistent/librutis_missing.so" })).await;
+    match res {
+        Err(e) => {
+            assert!(
+                e.contains("open") || e.contains("failed") || e.contains(".so"),
+                "error should mention the load failure, got: {e}"
+            );
+        }
+        Ok(v) => panic!("nonexistent .so should error, got Ok: {v}"),
+    }
+
+    tools_view.dispose().await.unwrap();
+}
