@@ -69,3 +69,24 @@
 **解读**:记忆保持率 100% + 压缩保真 100%(优质摘要) → **记忆架构是最强项**。
 量化实证:关键信息经优质摘要 100% 保留,模板 0% → **主动压缩必须用提炼摘要**。
 剩余短板:**实验2热加载/实验4督工的量化**(定性已知跑通)。下一步补这两项量化。
+
+## 六、完整测试健康基线(2026-08-27 更新,round 61)
+
+> 转轨后真实工程阶段的整体健康全景,供未来实例对照。方法:`cargo test -p
+> rutis-agent -p rutis-dsh -p rutis`。
+
+| 层 | 套件 | 数量 |
+|----|------|------|
+| rutis 内核 | contract(契约断言)+ parity(对等)+ dispatch_chain + probe | 58 + 57 + 2 |
+| rutis-agent | lib(driver 边界)+ integration(装配/门控)+ minimal(工具)+ unit_loop(sanitize/rollback/max_steps)+ self_tools(11 工具全功能)+ session_persist(记忆/压缩/持久化)+ self_driven + self_iteration(热加载)+ 其它 | 19+7+25+15+14+21+3+3+... |
+| rutis-dsh | llm_seam(4)+ llm_e2e(1) | 5 |
+| **合计** | **236 passed / 0 failed** | |
+
+**补充实证**:
+- 实机 e2e(真实 DEEPSEEK):`real_backend` 通过(round44,3.83s,调工具+多轮连续)——非 mock。
+- 工具层:11 个 self_tools 全部有**功能测试**,含失败路径(hotplug_load 不存在 .so)。
+- 已修真实 bug:cwd 敏感×3(skill/ledger/handoff)、hotplug 假绿、self_todo 空串清除、
+  is_context_overflow 真实 provider 格式(gpt-4o/anthropic)。
+- 技能库 15 SKILL(U/M/E/W 四类),方法论沉淀可检索。
+
+**对照用法**:未来实例可跑此命令,若 passed 大幅下降或有 FAILED,即健康回归信号。
