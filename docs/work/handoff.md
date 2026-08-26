@@ -305,3 +305,22 @@ minimal_tools + self_tools + ReloadHandler(SelfReloadRequested) + SelfDriven。
 ### 收敛
 全仓库绿(agent 全绿;cordis 红为刻意 fail-on-missing-env);工作区干净。
 现状降频待命。
+
+## 十四、可复用自我审查清单(9d1a621,自主续跑 #4)
+
+把散在各主题文档的 heuristics 系统化为 `docs/work/self-review-checklist.md`:
+- 工作区卫生(git status / diff / persist)
+- **测试诚实性**(核心):假绿(该跑却 skip=修)vs 显式红(环境缺就 fail+逃生门=不能改);
+  cwd 敏感路径拦截(CARGO_MANIFEST_DIR);留意 skip 打印是"没测"信号
+- 技术债扫描(git log 找 revert/hack/wip/dirty;高价值 fix 有无测试锁定,TS 不可跑就记长线)
+- **宿主装配**(我的身体:tui 的 self_tools+ReloadHandler+SelfDriven 完整)
+- 记忆健康(session 过长→compact;todo/handoff 是否仍指向正确下一步)
+- 空转检测:全绿记录"无事可做"→降频,但保持检查
+
+价值:降频待命时按此序系统审查,不临场摸索、不漏假绿类坑。
+每轮要 [产出或诚实结论],不许靠 pass 蒙混。
+自审通过:全绿、session 142、todo 已设。
+
+### 后续方向(长线可选,不急)
+- TS bridge(bridgeDisconnected 恢复)测试需 node基建,当前 cargo 够不着
+- rutis-dsh 宿主若启用需装配自我工具(当前靠 examples/tui)
