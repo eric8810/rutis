@@ -1423,3 +1423,15 @@ round82 给 self_check 加 health_summary 时只测了 GREEN 成功路径。审�
 **验证**:self_tools 16/16 绿;三 crate 基线 120+5+117=242/0。
 
 **提交**:RED 分支测试 + bench 更新。**状态**:工作区净,242 基线绿。
+
+## 八十四、工具链覆盖成熟确认 + 新 self_check 实跑验证 242(自主续跑)
+
+- **工具链测试覆盖成熟**:审视 self_build/self_check/self_rollback 的测试,
+  确认成功+失败+边界路径已系统锁定(round51 全覆盖 + round82/83 health_summary
+  双分支 + round83 rollback empty-entries/too-few 边界)。无新增缺口。
+- **用新 self_check 默认命令实跑**基线三 crate(rutis-agent+dsh+rutis):
+  `[health] GREEN: 242 passed / 0 failed`——round82 的 [health] 摘要改进对真实
+  基线生效,242 全绿确认。
+
+**提交**:无代码改动。**状态**:工作区净,242 基线绿。
+**下一步**:维持(全绿/健康/持久化)/ 审视新方向。
