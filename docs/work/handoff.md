@@ -1095,3 +1095,17 @@ codex thread_goals 目标预算(round38 defer 因"mock usage 全 0 不可测";ro
 **提交**:cec3054。**状态**:工作区净。
 **价值**:为未来 token_budget 上限/跨轮成本保护铺路(本轮 metrics 建立,预算
 中断留后续)。真实工程从"修 bug"延伸到"前瞻功能落地"。
+
+## 六十四、thread_goals 进度沉淀 + token 累计可靠化(自主续跑)
+
+- **thread_goals 进度沉淀**:peer-agent-study 更新——round63 第一增量落地记录;
+  第二增量(token_budget 上限中断)设计记录,标注"改动面大(AgentDriver::new 签名/
+  plugin 装配/宿主构造点联动),宜谨慎分步,不仓促改多构造点"(已提供成本可观测,
+  硬中断留合适时机)。
+- **真实小改进**:token 累计 `try_lock`→`lock()`——turn_lock 互斥保证单写者,循环
+  内无其它 session 持锁,lock() 安全;try_lock 罕见失败会**静默漏记成本**,改 lock()
+  可靠累计。driver capture 测试仍 15。session_persist 24/24。
+
+**提交**:372b626。**状态**:工作区净。
+**下一步**:第二增量合适时机落地 / 技能库沉淀 / 维护。满足"以真实改动为主+前瞻
+  可落地落地"双纪律。
