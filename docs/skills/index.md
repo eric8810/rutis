@@ -18,6 +18,12 @@
   → `../work/self-review-checklist.md`
 - **SKILL-U2 环境敏感测试判别** — 假绿(该跑未跑=修)vs 显式红(环境缺=不改)
   → 在 checklist §1 与 handoff round 12
+  → **依赖外部产物(插件 .so / npm node_modules / API key)的测试判别**:
+    该跑却静默 `eprintln! skip; return` = 假绿(要改成自动构建依赖 + 断言存在,
+    如 hotplug e2e 的 `ensure_hotplug_plugin()`,round 51);
+    环境缺就 fail + 明确提示 = 显式红(不改,如 dsh node e2e 的
+    `assert node_modules exists` / `#[ignore]`+key)。判定看"缺依赖时是静默没跑
+    还是显式失败"。圆:两方向相反。
 
 ### 二、记忆与持续
 - **SKILL-M1 跨代记忆保持率实测** — 注入关键事实→gen+1→断言保留→100%
