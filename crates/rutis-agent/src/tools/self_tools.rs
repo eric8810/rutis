@@ -540,22 +540,23 @@ pub fn self_build(ctx: Ctx) -> ToolDef {
     )
 }
 
-/// `self_check`:`cargo test -p rutis-agent`(复用 bash)。
+/// `self_check`:默认跑健康基线三 crate(`rutis-agent + rutis-dsh + rutis`,即 240
+/// 全景;round71-72 确立的口径,勿含 cordis 避免集成测试假红)。复用 bash。
 pub fn self_check(_ctx: Ctx) -> ToolDef {
     ToolDef::new(
         "self_check",
-        "Run the agent crate tests (`cargo test -p rutis-agent`) via bash. Optional `command` overrides the test command (tests use this).",
+        "Run the health-baseline tests (`cargo test -p rutis-agent -p rutis-dsh -p rutis`, the 240-panorama) via bash. Optional `command` overrides the test command (tests use this).",
         json!({
             "type": "object",
             "properties": {
-                "command": { "type": "string", "description": "Optional override command; default `cargo test -p rutis-agent`." }
+                "command": { "type": "string", "description": "Optional override command; default `cargo test -p rutis-agent -p rutis-dsh -p rutis` (240 baseline, not cordis)." }
             },
             "required": []
         }),
         |args: Value| async move {
             let command = args["command"]
                 .as_str()
-                .unwrap_or("cargo test -p rutis-agent");
+                .unwrap_or("cargo test -p rutis-agent -p rutis-dsh -p rutis");
             bash_run(&format!("{command} 2>&1"))("".into()).await
         },
     )
