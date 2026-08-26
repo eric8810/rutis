@@ -30,8 +30,10 @@
   grok PreToolUse/PostToolUse 核心,无需外部脚本进程。
 - **无 session start/end hook**:但有 session start 事件与每 turn persist(启动即
   可监听事件);end 由持久化覆盖。→ 不需额外落地。
-- **判定**:hooks 机制被我现有三段管线等价覆盖,不额外引入外部脚本系统
-  (避免过度工程)。研究消化闭环。
+- **判定(实证锁定)**:hooks 机制被我现有三段管线等价覆盖,不额外引入外部脚本系统。
+  **测试锚点** `integration.rs::pre_execute_gate_can_block_specific_tool`(round39)
+  证实:按 tool_name 门控可拒绝特定工具 + 该工具不执行 + 模型看到原因 = grok
+  PreToolUse matcher 的等价能力。研究消化闭环(有 test 而非仅判断)。
 - 同 codex goals 深研(round 38):研究他人 → 认清我已有 → 判断不需要。
 
 ## codex 目标预算(thread_goals)深研(round 38)

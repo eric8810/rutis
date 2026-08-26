@@ -712,3 +712,21 @@ build 记录的是 2b42d03 因为那是 build 时的 HEAD;提交 167ff95 后台�
 
 **状态**:工作区净,全测绿。差距表记忆/技能/信任/子代理已全clean;goals 项为前瞻记录。
 **下一步**:继续① 深化其它研究或转向新对象 ② 技能库/文档沉淀 ③ 维护(台账/全绿)。
+
+## 三十九、grok hooks 深研 → 实证锁定三段管线等价(自主续跑)
+
+研究 grok hooks(config + `.grok/hooks/` 脚本,在 PreToolUse/PostToolUse/session
+  start/end 跑,matcher 按工具匹配,需显式信任)。
+- **发现我已有** driver「工具三段管线」`tools/pre-execute`(fail-closed 门控)→
+  执行 → `tools/post-execute`(accept/replace),经 events broadcast,listener
+  可见 ToolCall(tool_name)实现 matcher 过滤。
+- **关键:从"判断"升级为"实证"** —— 新增测试
+  `integration.rs::pre_execute_gate_can_block_specific_tool`:注册 ToolPreExecute
+  waterfall listener 按 tool_name 拒绝 bash → bash 不执行 + 模型看到 block 理由。
+  = grok PreToolUse matcher 的等价能力有 test 锁定。
+- **判定**:hooks 机制已被三段管线等价覆盖,不引入外部脚本系统(避免过度工程)。
+  integration 6/6。
+
+**提交**:4cdb1d0(gate test + study 实证标注)。
+**状态**:工作区净,integration 6/6。差距表 hooks 行 = 实证锁定。
+**下一步**:继续研究深化/新对象 × 技能库/文档沉淀 × 维护(台账/全绿/健康)。
