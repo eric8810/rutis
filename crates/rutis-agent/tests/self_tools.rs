@@ -246,19 +246,17 @@ async fn self_check_runs_command_via_bash() {
 
 #[tokio::test]
 async fn self_build_runs_command_and_records_ledger() {
-    // 台账写 crate 目录下的约定路径(相对 cwd),测试后清理
-    let ledger_path = PathBuf::from(VERSION_LEDGER_PATH);
-    if let Some(parent) = ledger_path.parent() {
-        std::fs::create_dir_all(parent).unwrap();
-    }
-    let _ = std::fs::remove_file(&ledger_path);
+    // 台账写临时路径:避免污染仓库根真实台账(工具的 cwd 无关路径),
+    // 经 args["ledger"] 覆盖注入。
+    let tmp = TempDir::new("self-build");
+    let ledger_path = tmp.join("version-ledger.json");
 
     let root = Ctx::root().unwrap();
     let def = rutis_agent::self_build(root.clone());
     // 轻命令模拟成功构建(输出含 Finished 且无 error)→ 记台账
     let (ok, out) = run(
         &def,
-        json!({ "command": "echo Finished ok" }),
+        json!({ "command": "echo Finished ok", "ledger": ledger_path }),
     )
     .await;
     assert!(ok, "{out}");
@@ -272,12 +270,10 @@ async fn self_build_runs_command_and_records_ledger() {
     // 幂等:同 commit 再跑不重复记
     let (_, out2) = run(
         &def,
-        json!({ "command": "echo Finished ok" }),
+        json!({ "command": "echo Finished ok", "ledger": ledger_path }),
     )
     .await;
     assert!(!out2.contains("[ledger] recorded"), "幂等: {out2}");
-
-    let _ = std::fs::remove_file(&ledger_path);
 }
 
 // ── self_rollback(版本台账)──────────────────────────────────────────

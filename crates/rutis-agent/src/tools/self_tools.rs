@@ -25,7 +25,25 @@ use crate::session::SessionId;
 use crate::tools::{bash::bash_tool, hotplug::hotplug_load, ToolDef, ToolRegistry};
 
 /// 版本台账文件(约定路径,随仓库走)。
+/// 默认台账路径(仓库根,相对 docs/work/version-ledger.json)。
+/// 保留字符串常量供测试与文档引用。
 pub const VERSION_LEDGER_PATH: &str = "docs/work/version-ledger.json";
+
+/// cwd 无关的默认台账定位:编译期 CARGO_MANIFEST_DIR 上溯到仓库根,
+/// 避免运行时在非仓库根 cwd 下(如部署 agent 从别处启动)把台账写进
+/// 错误目录(cwd 敏感,同 round48 skill 修复)。
+///
+/// 不依赖 `exists()`(台账首次创建时文件尚不存在仍应落仓库根),只要
+/// manifest 所在的仓库结构存在即用绝对路径;回退相对路径仅兜非标准部署。
+pub fn default_ledger_path() -> std::path::PathBuf {
+    let repo_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(VERSION_LEDGER_PATH);
+    if repo_path.parent().map_or(false, |p| p.exists()) {
+        return repo_path;
+    }
+    std::path::PathBuf::from(VERSION_LEDGER_PATH)
+}
 
 /// 台账条目:一次成功构建/测试时的代码版本。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -476,7 +494,8 @@ pub fn self_build(ctx: Ctx) -> ToolDef {
         json!({
             "type": "object",
             "properties": {
-                "command": { "type": "string", "description": "Optional override command; default `cargo build -p rutis-agent`." }
+                "command": { "type": "string", "description": "Optional override command; default `cargo build -p rutis-agent`." },
+                "ledger": { "type": "string", "description": "Optional ledger path (tests inject a temp one; default repo-root docs/work/version-ledger.json, cwd-independent)." }
             },
             "required": []
         }),
@@ -489,7 +508,10 @@ pub fn self_build(ctx: Ctx) -> ToolDef {
             if let Value::String(s) = &out {
                 if !s.contains("error") && s.contains("Finished") {
                     let commit = git_head();
-                    let path = PathBuf::from(VERSION_LEDGER_PATH);
+                    let path = args["ledger"]
+                        .as_str()
+                        .map(PathBuf::from)
+                        .unwrap_or_else(default_ledger_path);
                     let mut ledger = VersionLedger::load(&path);
                     if ledger.entries.last().map(|e| e.commit.as_str()) != Some(commit.as_str()) {
                         let commit_clone = commit.clone();
@@ -606,7 +628,7 @@ pub fn self_rollback_tool() -> ToolDef {
             let ledger_path = args["ledger"]
                 .as_str()
                 .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from(VERSION_LEDGER_PATH));
+                .unwrap_or_else(default_ledger_path);
             let ledger = VersionLedger::load(&ledger_path);
             match ledger.previous() {
                 None => Ok(Value::String(
