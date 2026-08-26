@@ -800,3 +800,105 @@ fn compact_information_fidelity_keeps_key_facts_via_summary() {
     eprintln!("[compact-fidelity] template summary kept {kept_t}/{}", facts.len());
     assert_eq!(kept_t, 0, "模板摘要不保留关键事实(证明优质摘要的必要性)");
 }
+
+/// round62 前瞻项第一增量:跨轮 token 累计的持久化 roundtrip。
+/// - add_tokens 累计,saturating 防溢出;
+/// - persist/restore 后 tokens_used 保留(跨重启成本核算);
+/// - 旧文件(无 tokens_used 字段)→ 0(serde default 兼容)。
+#[test]
+fn tokens_used_accumulates_and_survives_restart() {
+    let tmp = TempDir::new("tokens");
+    let path = PathBuf::from(tmp.join("session.json"));
+
+    let mut s = Session::new();
+    assert_eq!(s.tokens_used(), 0);
+    s.add_tokens(100);
+    s.add_tokens(250);
+    assert_eq!(s.tokens_used(), 350, "累计");
+    // saturating:不会溢出回绕
+    s.add_tokens(u64::MAX - 340);
+    assert_eq!(s.tokens_used(), u64::MAX, "saturating 兜到 MAX");
+
+    s.persist(&path).unwrap();
+    let r = Session::restore(&path);
+    assert_eq!(r.tokens_used(), u64::MAX, "跨重启保留");
+}
+
+/// 旧 session 文件(无 tokens_used 字段)→ tokens_used = 0。
+#[test]
+fn legacy_session_file_without_tokens_loads_zero() {
+    let tmp = TempDir::new("legacy-tokens");
+    let path = PathBuf::from(tmp.join("session.json"));
+    std::fs::write(
+        &path,
+        r#"{"version":1,"id":7,"generation":2,"messages":[{"role":"user","content":"hi"}],"saved_at_ms":1}"#,
+    )
+    .unwrap();
+    let s = Session::restore(&path);
+    assert_eq!(s.tokens_used(), 0, "旧文件无 tokens_used → 0");
+}
+
+/// round62 前瞻项第一增量:driver 从 LLM 流式 Finish 捕获 usage 累计到
+/// session.tokens_used。用自定义 LanguageModel 返回带真实 token 的 Finish,
+/// 驱动一轮后断言累计(验证 driver 捕获链路,非仅 session 存储)。
+#[tokio::test]
+async fn driver_accumulates_llm_token_usage_from_finish() {
+    use aimux_core::language_model::LanguageModel;
+    use aimux_core::options::CallOptions;
+    use aimux_core::result::{GenerateResult, StreamResult};
+    use aimux_core::stream_part::StreamPart;
+    use aimux_core::types::{FinishReason, FinishReasonUnified, TokenUsage, Usage};
+
+    struct UsageLlm;
+    #[async_trait::async_trait]
+    impl LanguageModel for UsageLlm {
+        fn provider(&self) -> &str { "usage-test" }
+        fn model_id(&self) -> &str { "usage-test" }
+        async fn do_generate(&self, _o: &CallOptions) -> Result<GenerateResult, aimux_core::error::AiMuxError> {
+            Err(aimux_core::error::AiMuxError::Other("stream-only".into()))
+        }
+        async fn do_stream(&self, _o: &CallOptions) -> Result<StreamResult, aimux_core::error::AiMuxError> {
+            let stream: std::pin::Pin<Box<dyn futures::Stream<Item = Result<StreamPart, aimux_core::error::AiMuxError>> + Send>> =
+                Box::pin(async_stream::stream! {
+                    yield Ok(StreamPart::StreamStart { warnings: Vec::new() });
+                    yield Ok(StreamPart::TextDelta { id: "t0".into(), delta: "hi".into(), provider_metadata: None });
+                    // input 10 + output 5 = 15 tokens
+                    yield Ok(StreamPart::Finish {
+                        finish_reason: FinishReason { unified: FinishReasonUnified::Stop, raw: None },
+                        usage: Usage {
+                            input_tokens: TokenUsage { total: Some(10), no_cache: None, cache_read: None, cache_write: None, text: None, reasoning: None },
+                            output_tokens: TokenUsage { total: Some(5), no_cache: None, cache_read: None, cache_write: None, text: None, reasoning: None },
+                            raw: None,
+                        },
+                        provider_metadata: None,
+                    });
+                });
+            Ok(StreamResult { stream, request_body: None, response_headers: None })
+        }
+    }
+
+    let root = Ctx::root().unwrap();
+    use rutis_agent::llm_key;
+    let lm: Arc<dyn LanguageModel> = Arc::new(UsageLlm);
+    root.provide_as(llm_key(), lm).unwrap();
+    let tools_view = root.plugin(ToolsPlugin::new(vec![]));
+    let driver_view = root.plugin(AgentDriverPlugin::new(8));
+    soon(async {
+        (&tools_view).await.expect("tools");
+        (&driver_view).await.expect("driver");
+    })
+    .await;
+    let agent = root.get_as::<dyn Agent>(agent_key()).unwrap();
+    let _ = soon(agent.followup("go")).await.unwrap();
+    assert_eq!(
+        agent.session().tokens_used(),
+        15,
+        "driver captured input(10)+output(5) from Finish usage"
+    );
+
+    soon(async {
+        driver_view.dispose().await.unwrap();
+        tools_view.dispose().await.unwrap();
+    })
+    .await;
+}

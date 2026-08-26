@@ -105,6 +105,8 @@ pub struct SessionSnapshot {
     messages: Vec<ModelMessage>,
     summary: Option<String>,
     todo: Option<String>,
+    /// 跨轮累计 token(round62 前瞻项)。
+    tokens_used: u64,
 }
 
 impl SessionSnapshot {
@@ -113,12 +115,14 @@ impl SessionSnapshot {
         messages: &[ModelMessage],
         summary: Option<String>,
         todo: Option<String>,
+        tokens_used: u64,
     ) -> Self {
         Self {
             id,
             messages: messages.to_vec(),
             summary,
             todo,
+            tokens_used,
         }
     }
 
@@ -140,6 +144,11 @@ impl SessionSnapshot {
         self.todo.as_deref()
     }
 
+    /// 已累计跨轮 token(成本核算;round62 前瞻项)。
+    pub fn tokens_used(&self) -> u64 {
+        self.tokens_used
+    }
+
     /// 快照落盘(供 `self_persist` 工具经 `Agent::session()` 组合调用;
     /// 不新增 `Agent` trait 方法)。原子写,错误上抛。
     pub fn persist(&self, path: &Path) -> Result<(), String> {
@@ -151,6 +160,7 @@ impl SessionSnapshot {
             summary: self.summary.clone(),
             todo: self.todo.clone(),
             saved_at_ms: crate::session::now_ms(),
+            tokens_used: self.tokens_used,
         };
         let json = serde_json::to_string_pretty(&file)
             .map_err(|e| format!("serialize session: {e}"))?;

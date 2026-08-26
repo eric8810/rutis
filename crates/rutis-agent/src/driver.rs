@@ -460,6 +460,20 @@ impl AgentDriver {
                         failure = Some(AgentError::Llm(error.to_string()));
                         break;
                     }
+                    Chunk::Part(Ok(StreamPart::Finish { usage, .. })) => {
+                        // 跨轮 token 成本核算(round62 前瞻项):从流式 Finish 的
+                        // Usage 捕获单次调用的 input+output total,累计到 session。
+                        let n = usage
+                            .input_tokens
+                            .total
+                            .unwrap_or(0)
+                            .saturating_add(usage.output_tokens.total.unwrap_or(0)) as u64;
+                        if n > 0 {
+                            if let Ok(mut s) = self.session.try_lock() {
+                                s.add_tokens(n);
+                            }
+                        }
+                    }
                     Chunk::Part(Ok(_)) => {}
                     Chunk::Part(Err(e)) => {
                         failure = Some(AgentError::Llm(e.to_string()));
@@ -1056,6 +1070,7 @@ impl Agent for AgentDriver {
             session.messages(),
             session.summary().map(str::to_owned),
             session.todo().map(str::to_owned),
+            session.tokens_used(),
         )
     }
 

@@ -75,6 +75,9 @@ pub struct SessionFile {
     #[serde(default)]
     pub todo: Option<String>,
     pub saved_at_ms: u64,
+    /// 跨轮累计 token(可选;serde default 兼容旧文件)。round62 前瞻项。
+    #[serde(default)]
+    pub tokens_used: u64,
 }
 
 const SESSION_FILE_VERSION: u32 = 1;
@@ -93,6 +96,9 @@ pub struct Session {
     summary: Option<String>,
     /// 待办/下一步:中断后自动接续的工作指引;None = 无待办。
     todo: Option<String>,
+    /// 跨轮累计 token 消耗(自主 agent 成本核算;round62 前瞻项第一增量)。
+    /// 从 LLM 响应的 Usage 捕获累加,暴露给 self_status。
+    tokens_used: u64,
 }
 
 impl Session {
@@ -102,6 +108,7 @@ impl Session {
             messages: Vec::new(),
             summary: None,
             todo: None,
+            tokens_used: 0,
         }
     }
 
@@ -129,6 +136,7 @@ impl Session {
             messages: file.messages,
             summary: file.summary,
             todo: file.todo,
+            tokens_used: file.tokens_used,
         }))
     }
 
@@ -161,6 +169,16 @@ impl Session {
     /// 待办/下一步(中断后自动接续);None = 无待办。
     pub fn todo(&self) -> Option<&str> {
         self.todo.as_deref()
+    }
+
+    /// 已累计的跨轮 token 消耗(成本核算)。
+    pub fn tokens_used(&self) -> u64 {
+        self.tokens_used
+    }
+
+    /// 累加本轮/本次 LLM 调用的 token 消耗。
+    pub fn add_tokens(&mut self, n: u64) {
+        self.tokens_used = self.tokens_used.saturating_add(n);
     }
 
     /// 设置/更新待办(agent 记录下一步工作)。
@@ -214,6 +232,7 @@ impl Session {
             summary: self.summary.clone(),
             todo: self.todo.clone(),
             saved_at_ms: now_ms(),
+            tokens_used: self.tokens_used,
         };
         let json = serde_json::to_string_pretty(&file)
             .map_err(|e| format!("serialize session: {e}"))?;

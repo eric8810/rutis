@@ -237,12 +237,14 @@ pub fn self_status(ctx: Ctx) -> ToolDef {
                     .as_ref()
                     .map(|p| p.to_string_lossy().into_owned())
                     .unwrap_or_else(|| "not configured".to_string());
+                let tokens = snapshot.tokens_used();
                 Ok(Value::String(format!(
-                    "self_status:\n  identity: {}\n  generation: {}\n  status: {:?}\n  session messages: {}\n  persist path: {}",
+                    "self_status:\n  identity: {}\n  generation: {}\n  status: {:?}\n  session messages: {}\n  tokens used: {}\n  persist path: {}",
                     id.identity(),
                     id.generation(),
                     status,
                     msgs,
+                    tokens,
                     persisted,
                 )))
             }
