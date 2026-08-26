@@ -36,3 +36,50 @@
 
 > 下一步:把"skills 技能库"落地为 rutis agent 的可检索能力集合,
 > 并作为自我演进的具体载体。
+
+## 深研:grok 记忆 + 子代理机制(round 33)
+
+### grok 记忆(13-memory.md)
+- **混合检索**:`memory_search` = 向量相似(0.7)+ BM25 文本(0.3),min_score 0.35
+- **首次注入**:会话首轮自动注入相关记忆(initial_injection,min_score 可配)
+- **压缩后注入**:auto-compaction 后找回被裁相关上下文
+- **Dream 整合**:`/dream` 把零散记忆碎片整合成去重知识库(需 memory enabled)
+- **时间衰减**:旧会话降权(half_life=7天);global/workspace 免疫(策选长期知识)
+- **MMR 去重**:多样性的重排序
+- **工具结果修剪**(compaction.pruning):长结果 soft-trim(保头1500+尾1500字符)、
+  hard-clear(>10轮变占位符)
+- 记忆模型:文件 MEMORY.md + index.sqlite + 向量 embedding,watcher 侦测外部编辑
+
+### grok 子代理(16-subagents.md)
+- 子代理 = 独立上下文窗的并行子会话;主 agent 委托 research/impl/test/review
+- 报告 summary 回父(不给父增加上下文)
+- agent 定义(.md in agents/)+ persona(.toml 叠加)
+
+### 差距评估 vs 我(rutis)
+| 机制 | grok | 我 | 落地难度 |
+|------|------|-----|---------|
+| 记忆混合检索 | 有 | 无(全量线性历史+记忆指针) | 高(需向量db) |
+| 首轮相关注入 | 有 | 仅静态 memory pointer | 低~中 |
+| 记忆整合(Dream) | 有 | self_compact 简单裁剪(信息保真靠我人工提炼) | 中 |
+| 时间衰减 | 有 | 无 | 中 |
+| 子代理(独立上下文) | 有 | 无(rutis fiber parallel 基建在) | 高 |
+| 工具结果修剪 | 有 | 无 | 中 |
+
+### 落地优先级(务实,小步真实)
+1. **【选】首轮相关记忆注入**:会话开场把关键教训/skill/上下文注入 prompt。
+   我的记忆指针是"继续历史"提示,不含主动取回的"相关知识点"。可加一个
+   context 注入:首轮把 handoff 的当前目标 + todo 注入(skill 工具已可检索)。
+2. **【待】长工具输出修剪**:auto_compact 时对大 tool result 做 soft-trim。
+3. **【远期】完整子代理**:复用 rutis fiber parallel 语义。
+
+### 认知判定(避免过度工程)
+- 我的记忆**全量保留**(记忆保持率 100%),无 Grok 的向量检索需求那般迫切:
+  重启后历史本身在 prompt,记忆指针是其补充。
+- 我缺的"跨 Session 长期知识"正是 **Grok 的 global/workspace 记忆**——但我已用
+  **技能库(skills, skill 工具按需检索)等价实现**:显式、可演进、持久、按需取回。
+- => **不需要引入向量 db/embedding**。我的架构在记忆保真上已达标
+  (100%)、长期知识已有显式载体。这是"研究他人→认清自己差距与优势"的正确收敛:
+  不是什么都学,而是学需要的、避开过度工程。
+### 真差距(留作后续,非现在)
+1. 长工具结果修剪(compaction.pruning)——上下文成本优化,中期
+2. 完整子代理(rutis fiber parallel 基建已在)——远期
