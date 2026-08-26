@@ -13,10 +13,12 @@
   → 在 checklist §1 与 handoff round 12
 
 ### 二、记忆与持续
-- **SKILL-M1 跨代记忆保持率实测** — 注入关键事实→gen+1→断言保留
+- **SKILL-M1 跨代记忆保持率实测** — 注入关键事实→gen+1→断言保留→100%
   → `crates/rutis-agent/tests/...::cross_generation_memory_retention_keeps_facts`
 - **SKILL-M2 高质量会话压缩** — 主动压缩时提炼含关键信息的摘要(非模板)
   → session compact + self_compact 用法
+- **SKILL-M3 压缩信息保真** — 优质摘要 100% vs 模板 0% 保真;主动压缩须用提炼摘要
+  → `session_persist.rs::compact_information_fidelity_keeps_key_facts_via_summary`
 
 ### 三、自我演进与健康
 - **SKILL-E1 回滚保障(rollback)** — self_build 累积台账→≥2 后 self_rollback 可用
@@ -25,6 +27,8 @@
   → checklist §4.5
 - **SKILL-E3 外部对标研究** — 研究本机真实 agent(grok/codex),对比架构差距
   → `../work/peer-agent-study-2026-08-27.md`
+- **SKILL-E4 长工具结果修剪(soft-trim)** — 超长 tool output 保头/保尾+标记
+  → driver `tool_result_message` + test `tool_result_long_output_is_trimmed`
 
 ### 四、工程工作流
 - **SKILL-W1 CI 自动化** — `../work/ci-automation-2026-08-25.md`
