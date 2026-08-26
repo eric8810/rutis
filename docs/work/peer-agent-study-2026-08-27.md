@@ -20,6 +20,20 @@
 | 目标追踪 | — | **goals_1.sqlite** | todo(单值) |
 | 会话工作 | sessions/ | sessions/ + worktrees | .rutis/session.json |
 
+## grok Dream 整合深研(round 41)
+- **grok /dream**:把散落的 session logs + memory entries 整合成有组织、去重的
+  知识库,减少噪声、改善搜索;Auto-Dream 按 min_hours=4 / min_sessions=3 门控
+  session 结束时自动跑。
+- **前提**:grok 是"多 session + 向量检索",碎片会累积,故需整合。
+- **vs 我**:
+  - 我单 `.rutis/session.json` 连续跟踪(非多 session 碎片);跨代保持 100%
+    (实验1 已证) → 无"整合去重后更连贯"的需求。
+  - 长期知识 = 技能库(docs/skills,显式、去重、按需检索) = Dream 的
+    "去重知识库"等价载体。
+  - 技能库审查:12 个 SKILL 主题独立不重叠,本就显式去重 → 无需再 Dream。
+- **判定**:Dream 服务于多 session + 检索架构;我的单 session + 技能库已等价
+  覆盖,不需要落地(同 time-decay/首轮注入判定)。研究消化闭环。
+
 ## grok hooks 机制深研(round 39)
 - **grok hooks**:在 `.grok/hooks/` + config 层 `[[hooks.<Event>]]` 定义项目脚本,
   在工具前后(pre/post-tool-use)和会话开始/结束跑。`matcher = "Bash|Write|Edit"`
