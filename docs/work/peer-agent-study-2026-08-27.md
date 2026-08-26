@@ -194,3 +194,15 @@
   常量脆弱);已有"消息不无限增长"行为断言兜底空转保护。判定:过度测试,不做。
   同 round45 纪律:不为做而做。
 - **结论**:SelfDriven 语义健康,与 round44 实机 + round45 guard 测试一致,无待力改。
+
+## driver session 路径宿主分层判定(round 53)
+- `default_session_path()` 用 current_dir(相对 .rutis/session.json)。
+- **不是 cwd bug**(区别于 skill/ledger/handoff 三处修复):
+  - skill/ledger/handoff = 仓库内**固定资源**,应锁仓库根(依赖它们的工具内部
+    隐式硬编码相对路径,我无法避免 → 已修复)。
+  - session = 运行时**数据**(每项目一 session),跟启动 cwd 走是合理设计;
+    且默认 None(`AgentDriverPlugin::new()`),由宿主**显式**选
+    `with_default_session_path()`(跟 cwd)或 `with_session_path(显式绝对)`。
+- CLI 用法确认:main.rs:257 人用默认跟 cwd;376/513/567 显式指定。均合理。
+- **结论**:session 跟 cwd 是正确行为,勿动(同为 host 层职责判断,round35 信任
+  边界 round36 subagent 一致治理)。
