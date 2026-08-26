@@ -1378,3 +1378,16 @@ round78 基线实证中"实机 e2e"此前依赖 round44 历史记录。本轮检
 
 **提交**:无代码改动。**状态**:工作区净,240 基线绿。
 **下一步**:维持(全绿/健康/持久化)/ 持续激活;工作区一变即有可做。
+
+## 八十一、真实工程改进:self_check 默认口径对齐 240 基线(打破代码层停滞)(自主续跑)
+
+连续 9 轮无代码改动后,审视发现 self_check 工具的真实不一致:默认命令
+  `cargo test -p rutis-agent` 只跑 agent crate,而 round71-72 确立的健康基线是
+  三 crate `rutis-agent + rutis-dsh + rutis`(=240 全景,勿含 cordis 免集成假红)。
+
+**改进**:self_check 默认命令改为 `cargo test -p rutis-agent -p rutis-dsh -p rutis`,
+  与基线纪律、SKILL-U1 注记一致。self_check 测试显式传 command 覆盖,不受影响。
+
+**验证**:cargo build ok;self_tools 14/14 绿;240 基线(118+5+117=240)后改动零退化。
+
+**提交**:self_check 改进。**状态**:工作区净,240 基线绿。
