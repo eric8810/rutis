@@ -458,6 +458,10 @@ fn persona_carries_essential_self_evolution_clauses() {
     assert!(persona.contains("恒定命题"), "{persona}");
     assert!(persona.contains("失败是观察素材"), "{persona}");
     assert!(persona.contains("持续运行"), "{persona}");
+    // 自我激活检查(每轮必做,非可选):git status → 提交 → 审视 → 待命
+    assert!(persona.contains("自我激活检查"), "{persona}");
+    assert!(persona.contains("每轮必做"), "{persona}");
+    assert!(persona.contains("git status"), "{persona}");
     // 插值生效
     assert!(persona.contains("scripted-model"), "{persona}");
     assert!(persona.contains("/tmp/work"), "{persona}");
