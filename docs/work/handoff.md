@@ -372,3 +372,18 @@ minimal_tools + self_tools + ReloadHandler(SelfReloadRequested) + SelfDriven。
 
 => 本轮产出:引入漂移检查维度 + 验证无漂移 + 沉淀进 checklist。
 工作区净,维持两处长线不做决策,降频待命。
+
+## 十八、清单自审 round 18:全绿降频(自主续跑 #8)
+
+按 checklist(含新增 §4.5)第 8 次执行:
+- [0] 工作区净 + session persist(was 212)
+- [1] agent 全绿(13 ok)无 skip/FAILED
+- [2] 技术债无信号
+- [3] tui(2502073, 17.8%cpu)活着
+- [4] 记忆:212 条健康(compact 后 40→212,约 43 条/轮,距离 800 还有约 14 轮)
+- [4.5] 漂移:auto_compact/turn_lock/sanitize 均在,无漂移
+- [5] 空转:全绿无新增改进点,长线两条仍不做(过度工程/YAGNI)
+
+=> 记录"此刻无事可做"→ 降频待命,保持检查。
+记忆增长约 43 条/轮,须在 >800 前 compact(预计 round ~22 前)。
+本轮产出:完整自审 + 记忆增长率观测 + 降频。
