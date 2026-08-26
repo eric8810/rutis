@@ -46,6 +46,11 @@
   等)时,用**真实外部输入**(真实 provider 错误格式)检验漏判,别只看理想形式;
   补漏 + 正反例锁定(round57:gpt-4o too-large / anthropic at-most 曾漏,auto-compact
   不触发长会话退化)。
+- **SKILL-E6 前瞻项前提变化重估** — 被 defer/标注"前瞻"的能力,其 defer 前提变化后
+  应**重新评估是否可落地**(round63-65: codex token 预算曾因"mock usage 全 0 不可测"
+  defer,真实后端确立后前提消除 → 完整落地跨轮 token 累计+预算硬保护)。
+  落地前谨慎评估改动面(AgentDriver::new 仅一处调用 → 默认 None 向后兼容),
+  超出核心价值的不做(如完整 status 状态机编码,避免过度)。
 
 ### 四、工程工作流
 - **SKILL-W1 CI 自动化** — `../work/ci-automation-2026-08-25.md`

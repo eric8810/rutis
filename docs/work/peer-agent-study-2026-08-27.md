@@ -90,12 +90,13 @@
   Session.tokens_used(跨轮累计,serde 兼容)+ add_tokens(saturating)+ driver
   流式 Finish 捕获 usage 累计 + self_status 暴露。测试含 driver 捕获链路
   mock(input10+output5=15)。session_persist 24/24。
-- **第二增量设计(round64 注,未仓促落)**:token_budget 上限中断——AgentDriver
-  加 with_token_budget(默认 None=无预算,向后兼容),驱动循环每轮检查
-  tokens_used >= budget 时中断(新增 AgentError::BudgetLimit 或标记)。需
-  AgentDriver::new 签名 + plugin 装配 + 宿主构造点联动,改动面大,宜谨慎分步。
-  本轮记录设计,不仓促改多构造点(重 cost-benefit:已提供成本可观测,硬中断留
-  合适时机)。
+- **已完整落地(round65)**:token_budget 上限中断成本硬保护——评估改动面
+  (AgentDriver::new 仅 plugin apply 一处调用)+ 默认 None 向后兼容后落地。
+  `AgentDriverPlugin.with_token_budget` + run_loop 每 step 检查累计 tokens_used
+  vs budget 超限返回 `AgentError::BudgetLimit{budget,used}`。测试
+  token_budget_limit_interrupts_turn(UsageLlm2: 150>100 跨轮触发)。
+  → 研究→defer→前提变化→完整落地闭环。全景 240 passed。
+  未做完整 status 状态机(active/paused/blocked 编码),超出核心价值,未过度。
 
 ## 我 vs 他人的实质差距(落到可增强)
 
