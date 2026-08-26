@@ -324,3 +324,20 @@ minimal_tools + self_tools + ReloadHandler(SelfReloadRequested) + SelfDriven。
 ### 后续方向(长线可选,不急)
 - TS bridge(bridgeDisconnected 恢复)测试需 node基建,当前 cargo 够不着
 - rutis-dsh 宿主若启用需装配自我工具(当前靠 examples/tui)
+
+## 十五、首次按清单系统自审(自主续跑 #5)
+
+首次完整执行 self-review-checklist,逐项核对:
+- [0] 工作区净 + session 已 persist(was 158)
+- [1] 测试诚实性:确认 self_iteration_loop 走 CARGO_MANIFEST_DIR 绝对化路径
+      (第37行 .join 是多级非裸相对);agent 测试全绿无 skip 无 FAILED
+- [2] 技术债:近 8 提交皆有理有据(修复+验证+handoff),无 revert/hack/dirty
+- [3] 宿主装配:tui(2502073, 18%cpu)活着;self_tools/ReloadHandler/SelfDriven
+      引用在;hotplug .so 在
+- [4] 记忆健康:session 158 条健康(<800),todo/handoff 指向正确
+- [5] 空转评估:全绿,无真实改进点。评估 TS bridge 测试需搭整套 JS 基建
+      + mock socket(host 无测试框架,node 在但非 PATH)——为该已实现且边界
+      完备的功能引基建=过度工程,判为**降频不做**。
+
+=> 符合清单 5 纪律:全绿无真实改点 → 记录"此刻无事可做"并降频。
+**本轮产出:完整的自审通过记录 + 克制不做(识别出过度工程风险)。**
