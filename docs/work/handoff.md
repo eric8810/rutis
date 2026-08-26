@@ -626,3 +626,20 @@ build 记录的是 2b42d03 因为那是 build 时的 HEAD;提交 167ff95 后台�
 
 **提交**:6ac06f5/7522153(实验2) + 48bad82(soft-trim) + 5cd52bf(study表)
 **状态**:工作区净,全测绿,技能库持久可用。台账待累积(下次 build 记录当前 HEAD)。
+
+## 三十四、技能库登记 + codex skills 机制深研(自主续跑)
+
+**技能库增补**(登记最新能力):
+- SKILL-M3 压缩信息保真(100% vs 0% 量化)
+- SKILL-E4 长工具结果修剪(soft-trim,真差距落地)
+- index 头部加「技能调用纪律」(触发判断+边界+复用优先,借鉴 codex description 否定边界)
+
+**codex .system skills 深研**(/home/eric8810/.codex/skills/.system/skill-installer|imagegen|skill-creator):
+- SKILL.md 格式 = frontmatter(name+description含否定边界+metadata) + 正文(模式/rules) + references/ + scripts/
+- **结论**:我的扁平 index(每技能→引方法论文档)已满足"可检索复用";不必目录化每
+  技能(避免过度工程)。已吸收:调用纪律的"何时用/何时不用"。技能无需向量检索(记忆全量保留)。
+
+**提交**:9971287(skill登记) + a8c380f(调用纪律+study)
+**状态**:工作区净,全测绿。session 主动 compact(716→40,keep摘要)。基线与真差距见 round33。
+**下一步**:真差距继续——完整子代理(rutis fiber parallel)或信任边界(trusted_folders)研究;
+技能库已登记完成。台账累积自 build。
