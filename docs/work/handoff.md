@@ -481,3 +481,22 @@ tests/ 目录。这是审查方法论的真实精进。
 
 **确认**:agent 13 组测试全绿(含内部单测)。sanitize/auto_compact/context-overflow
 皆已被内部单测锁定,agent 自愈逻辑健康——无需额外补测试。
+
+## 二十六、自我增强:修复 rollback 保障(a2124e4,自主续跑 #15 后期)
+
+**发现**:docs/work/version-ledger.json 不存在 → self_rollback 报"ledger fewer
+than 2 entries",我的自我迭代回滚保障不可用(若 persona/工具/hotplug 增强出错
+想回滚,无路)。
+
+**修复**(真正的自我增强,非 dsh/example):
+- self_build 成功生成台账第一笔(commit f59e333, note self_build)。
+- 提交进 git 跟踪(docs/work/version-ledger.json),作为版本历史一部分。
+- 未来每次实质代码增强后 self_build 会自然累积回滚点;≥2 条后 self_rollback
+  才能真正 git-checkout 上一代。
+
+**认知**:这台账是 agent 的自我迭代安全网。先前缺失无人察觉=self_rollback
+形同虚设。审查"工具可用性"不只读描述,要看依赖文件/状态是否真的就位。
+
+**总结本轮**:用户指正"加强自己非dsh"后,做了真实自我增强——
+① persona 更新拒绝空转 ② 审查方法论修复(内部 #[cfg(test)]) ③ rollback 台账
+初始化。三件都是增强 agent 自身能力,非写 example。
