@@ -93,3 +93,71 @@ async fn self_iteration_loop_persona_plus_hotplug() {
     let _ = driver_view.dispose().await;
     let _ = tools_view.dispose().await;
 }
+
+/// 实验 2:热加载量化基线(agent-bench)。测"注册→调用→返回"端到端成功:
+/// hotplug_load 从 .so 挂载 release_notes → 后续 turn 实际调用它 → 断言返回。
+/// 指标:注册成功 + 调用成功(端到端),这是热加载"即插即用的可量化证明"。
+#[tokio::test]
+async fn hotplug_load_then_call_is_end_to_end() {
+    // 定位 .so(与既有测试同法:CARGO_MANIFEST_DIR 往上级两级 = 仓库根)
+    let repo_root = {
+        let m = env!("CARGO_MANIFEST_DIR");
+        let p = std::path::Path::new(m);
+        p.parent().unwrap().parent().unwrap()
+    };
+    let so = repo_root
+        .join("target/debug/librutis_hotplug_demo.so")
+        .to_string_lossy()
+        .into_owned();
+    if !std::path::Path::new(&so).exists() {
+        eprintln!("skip: {so} not built (run cargo build -p rutis-hotplug-demo)");
+        return;
+    }
+
+    let root = Ctx::root().unwrap();
+    // turn1 hotplug_load;turn2 调用 release_notes;turn3 结束
+    let llm = Arc::new(ScriptedLlm::new(vec![
+        LlmResponse::tool_calls(vec![rutis_agent::tool_call(
+            "h1", "hotplug_load", json!({ "path": so }),
+        )]),
+        LlmResponse::content("plugged"),
+        LlmResponse::tool_calls(vec![rutis_agent::tool_call(
+            "r1", "release_notes", json!({}),
+        )]),
+        LlmResponse::content("notes fetched"),
+        LlmResponse::content("end"),
+    ]));
+    root.provide_as(
+        llm_key(),
+        llm.clone() as Arc<dyn aimux_core::language_model::LanguageModel>,
+    )
+    .unwrap();
+    let tools_view = root.plugin(ToolsPlugin::new(rutis_agent::self_tools(root.clone())));
+    let driver_view = root.plugin(AgentDriverPlugin::new(20));
+    (&tools_view).await.unwrap();
+    (&driver_view).await.unwrap();
+    let agent = root.get_as::<dyn Agent>(agent_key()).unwrap();
+
+    let _ = soon(agent.followup("load plugin")).await.unwrap();
+    let _ = soon(agent.followup("get notes via release_notes")).await.unwrap();
+    let _ = soon(agent.followup("done")).await.unwrap();
+
+    // 1) 注册成功
+    let registry = root
+        .get_as::<rutis_agent::ToolRegistry>(rutis_agent::tools_key())
+        .unwrap();
+    assert!(registry.get("release_notes").is_some(), "release_notes 已挂载");
+
+    // 2) 调用成功(release_notes 被执行,结果回喂给模型)
+    let calls = llm.calls.lock().unwrap();
+    // 第 2 个用户 turn(调 release_notes)之后的 history 应含 release_notes 结果
+    let notes_called = calls[1]
+        .message_texts()
+        .iter()
+        .any(|(_, t)| t.contains("release_notes") || t.contains("notes"));
+    assert!(notes_called, "release_notes 在 turn 2 被调用: {calls:?}");
+    eprintln!("[hotplug-e2e] release_notes registered + callable end-to-end ✓");
+
+    let _ = driver_view.dispose().await;
+    let _ = tools_view.dispose().await;
+}
