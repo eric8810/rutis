@@ -42,6 +42,10 @@
   → `../work/peer-agent-study-2026-08-27.md`
 - **SKILL-E4 长工具结果修剪(soft-trim)** — 超长 tool output 保头/保尾+标记
   → driver `tool_result_message` + test `tool_result_long_output_is_trimmed`
+- **SKILL-E5 启发式判别的真实输入覆盖** — 审视关键词/启发式逻辑(is_context_overflow
+  等)时,用**真实外部输入**(真实 provider 错误格式)检验漏判,别只看理想形式;
+  补漏 + 正反例锁定(round57:gpt-4o too-large / anthropic at-most 曾漏,auto-compact
+  不触发长会话退化)。
 
 ### 四、工程工作流
 - **SKILL-W1 CI 自动化** — `../work/ci-automation-2026-08-25.md`
