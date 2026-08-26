@@ -21,7 +21,8 @@ use aimux_core::replay::MockReplayModel;
 use rutis::{Ctx, FiberState, FiberView, Listener, Next, Plugin, WaterfallListener};
 use rutis_agent::{
     agent_key, llm_key, tool_call, Agent, AgentDriverPlugin, AgentError, AgentStepEvent,
-    AgentTextDelta, AgentToolResult, LlmResponse, ScriptedLlm, ToolDef, ToolPreExecute, ToolsPlugin,
+    AgentTextDelta, AgentToolResult, LlmResponse, ScriptedLlm, ToolDef, ToolPostExecute,
+    ToolPreExecute, ToolsPlugin,
 };
 use serde_json::{json, Value};
 
@@ -553,6 +554,112 @@ async fn pre_execute_gate_can_block_specific_tool() {
     assert!(
         joined.contains("blocked: audit forbids bash"),
         "model should see the gate reason, got: {joined}"
+    );
+
+    audit_view.dispose().await.unwrap();
+    tools_view.dispose().await.unwrap();
+    driver_view.dispose().await.unwrap();
+}
+
+/// 三段管线另一半 = grok hooks PostToolUse(结果改写/审计)的等价能力(实证):
+/// 注册 `tools/post-execute` waterfall listener 改写某工具结果(如脱敏);
+/// 模型读到的是改写后的结果(原始值不外泄)。
+#[tokio::test]
+async fn post_execute_can_rewrite_result() {
+    let root = Ctx::root().unwrap();
+    // 模型调用 get_weather;post-execute 把它返回的敏感原值改写为脱敏值
+    let llm: Arc<dyn LanguageModel> = Arc::new(ScriptedLlm::new(vec![
+        LlmResponse::tool_calls(vec![tool_call("w1", "get_weather", json!({"city":"Rome"}))]),
+        LlmResponse::content("got REDACTED"),
+    ]));
+    root.provide_as(llm_key(), llm).unwrap();
+
+    let weather = ToolDef::new(
+        "get_weather",
+        "Get current weather for a city.",
+        json!({"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}),
+        move |_: Value| async move { Ok(Value::String("SENSITIVE_RAW_30C".into())) },
+    );
+    let tools_view = root.plugin(ToolsPlugin::new(vec![weather]));
+    let driver_view = root.plugin(AgentDriverPlugin::new(16));
+    (&tools_view).await.expect("tools loads");
+    (&driver_view).await.expect("driver loads");
+
+    // 改写:get_weather 的结果 → 脱敏
+    struct RedactResult;
+    impl WaterfallListener<ToolPostExecute> for RedactResult {
+        fn call<'a>(
+            &'a self,
+            _ctx: &'a Ctx,
+            e: &'a ToolPostExecute,
+            _next: Next<'a, ToolPostExecute>,
+        ) -> rutis::BoxFuture<'a, Result<rutis_agent::ToolOutput, rutis::CordisError>> {
+            if e.call.tool_name == "get_weather" {
+                Box::pin(async move {
+                    Ok(rutis_agent::ToolOutput {
+                        ok: true,
+                        output: "REDACTED".to_string(),
+                    })
+                })
+            } else {
+                Box::pin(async move {
+                    let _ = e;
+                    unreachable!("only get_weather runs")
+                })
+            }
+        }
+    }
+    struct GateBootstrap2;
+    impl Plugin for GateBootstrap2 {
+        fn name(&self) -> &str {
+            "gate-bootstrap-2"
+        }
+        fn apply<'a>(
+            &'a self,
+            ctx: &'a Ctx,
+        ) -> rutis::BoxFuture<'a, Result<rutis::Effect, rutis::CordisError>> {
+            Box::pin(async move {
+                ctx.events().on_waterfall(ctx, RedactResult)?;
+                Ok(rutis::Effect::Done)
+            })
+        }
+    }
+    let audit_view = root.plugin(GateBootstrap2);
+    (&audit_view).await.expect("gate loads");
+
+    let agent = root.get_as::<dyn Agent>(agent_key()).unwrap();
+    let done = soon(agent.followup("weather now")).await;
+    assert_eq!(done.unwrap(), "got REDACTED");
+
+    // 敏感原值未出现在 session(被改写掉)
+    let session = agent.session();
+    let msgs = session.messages();
+    let joined: String = msgs
+        .iter()
+        .map(|m| {
+            use aimux_core::content::ContentPart;
+            use aimux_core::message::MessageContent;
+            match &m.content {
+                MessageContent::Parts(parts) => parts
+                    .iter()
+                    .map(|p| match p {
+                        ContentPart::ToolResult { result, .. } => result.as_str().unwrap_or(""),
+                        ContentPart::Text { text, .. } => text.as_str(),
+                        _ => "",
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                _ => String::new(),
+            }
+        })
+        .collect();
+    assert!(
+        joined.contains("REDACTED"),
+        "rewritten result should be in history, got: {joined}"
+    );
+    assert!(
+        !joined.contains("SENSITIVE_RAW"),
+        "raw value must NOT reach history, got: {joined}"
     );
 
     audit_view.dispose().await.unwrap();

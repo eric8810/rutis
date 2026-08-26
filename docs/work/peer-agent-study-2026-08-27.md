@@ -34,6 +34,9 @@
   **测试锚点** `integration.rs::pre_execute_gate_can_block_specific_tool`(round39)
   证实:按 tool_name 门控可拒绝特定工具 + 该工具不执行 + 模型看到原因 = grok
   PreToolUse matcher 的等价能力。研究消化闭环(有 test 而非仅判断)。
+- **补全 PostToolUse 实证(round39b)**:`integration.rs::post_execute_can_rewrite_result`
+  证实 tools/post-execute 可改写工具结果(脱敏),敏感性原值不达 session = grok
+  PostToolUse 等价能力。三段管线 = Pre+Post 双钩子,均有 test 锁定。integration 7/7。
 - 同 codex goals 深研(round 38):研究他人 → 认清我已有 → 判断不需要。
 
 ## codex 目标预算(thread_goals)深研(round 38)
