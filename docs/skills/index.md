@@ -16,6 +16,10 @@
 ### 一、自我审查与纪律
 - **SKILL-U1 清单自审** — 降频待命时系统化审查,避免空转与漏查
   → `../work/self-review-checklist.md`
+  → **跑健康/基线测试务必用 crate 清单 `rutis-agent + rutis-dsh + rutis`,勿用
+    rutis-cordis**(round71/72 实操):240 基线=agent118+dsh5+rutis117。用错 crate
+    (如 rutis-cordis 当"工作区三 crate")会看到 host_cordis 等集成测试因缺外部
+    checkout 假红,误判为 bug(round71 我亲身踩坑)。做自审测试先确认 crate 口径。
   → **§5 空转检测已对齐 persona ★最重要一课**:全绿审计+记手写"无事"+降频 ≠ 产出;
     实质产出 = 修真实 bug / 锁真实风险 / 增强自身 / 写工具。找不到真实改进点时,
     诚实列已审视候选与排除理由,仍非手工 pass 蒙混(round 69 修正)。
