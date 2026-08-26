@@ -516,12 +516,16 @@ async fn skill_is_registered_self_tool() {
         tex2.contains("SKILL-U2"),
         "skill SKILL-U2 should return its row, got: {tex2}"
     );
-    if let Some(single) = (def.run)(json!({ "key": "SKILL-DOESNOTEXIST" })).await.ok() {
-        assert!(
-            single.as_str().map_or(false, |s| s.contains("not found")),
-            "unknown SKILL should report not-found, got: {single}"
-        );
-    }
+    // 未知 SKILL:必须报告 not-found(强制断言,不用 if-let 避免静默跳过)
+    let res3 = (def.run)(json!({ "key": "SKILL-DOESNOTEXIST" })).await;
+    let tex3 = res3
+        .ok()
+        .and_then(|val| val.as_str().map(str::to_owned))
+        .unwrap_or_else(|| "NO_TEXT".to_string());
+    assert!(
+        tex3.contains("not found"),
+        "unknown SKILL should report not-found, got: {tex3}"
+    );
 }
 
 /// cwd 无关路径解析:default_ledger_path / default_handoff_path 必须指向
