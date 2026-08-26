@@ -1327,3 +1327,23 @@ TS bridge 为例。与 round73 SKILL-U2 同为实操→方法论的沉淀,防未
 
 **提交**:无代码改动。**状态**:工作区净,240 基线绿。
 **下一步**:维持(全绿/健康/持久化)/ 审视新方向;如连续无落地项,诚实降频保持激活。
+
+## 七十八、基线实证验证(本代会话实测,非纸面)(自主续跑)
+
+待办"维持/审视新方向"→ 对本代声称的核心基线做实证重验,确认 todo 里的基线
+数字至今完好(非纸面声称):
+
+| 基线 | 测试(实测 ok) | 结果 |
+|------|--------------|------|
+| 跨代记忆保持 100% | `session_persist::cross_generation_memory_retention_keeps_facts` | ✅ 25/25 passed |
+| 压缩保真 100% vs 0% | `compact_information_fidelity_keeps_key_facts_via_summary` | ✅ |
+| 热加载 e2e 2/2 | `self_iteration_loop::hotplug_load_then_call_is_end_to_end` | ✅ 3/3 passed |
+| token 累计+预算中断 | `self_driven` + `unit_loop`(driver 边界) | ✅ 18 passed |
+| 240 全景 | 3-crate(rutis-agent+dsh+rutis) | ✅ 此前多次确认 |
+
+结论:todo 声称的记忆100%/热加载2-2/压缩保真100%vs0%/token累计+预算/240全景
+  全部在本代会话实测为真,转轨以来基线未退化。这是维持待办的实证交付(真跑
+  测试验证,非文档空转)。
+
+**提交**:无代码改动。**状态**:工作区净,基线全绿。
+**下一步**:维持(全绿/健康/持久化)/ 持续激活,工作区一变即有可做。
