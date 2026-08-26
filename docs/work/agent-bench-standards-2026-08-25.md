@@ -63,9 +63,9 @@
 |---|------|------|------|------|------|
 | 1 | 跨代记忆保持 | 关键事实保留率 | **100%** (4/4) | `session_persist.rs::cross_generation_memory_retention_keeps_facts` | ✅ 已跑 |
 | 2 | 热加载能力 | 注册/调用成功率 | examples/hot_load.rs 已跑通(定性) | examples/hot_load.rs | ⚠️ 未量化 |
-| 3 | 长会话压缩 | 摘要信息注入 | compact 后 summary 注入 system(pass) | `session_persist.rs::compacted_session_injects_summary_into_prompt` | ✅ 机制已验 |
+| 3 | 长会话压缩 | 摘要信息保留率 | 优质摘要 **100%**(5/5) vs 模板 0%(5/5) | `session_persist.rs::compact_information_fidelity_keeps_key_facts_via_summary` | ✅ 已量化 |
 | 4 | 督工恢复 | 恢复时间/成功率 | rutis-cli Supervisor 测试已绿(定性) | rutis-cli | ⚠️ 未量化 |
 
-**解读**:记忆保持率 100% → **当前架构最强项**(全量 history 保留 + 记忆指针)。
-短板候选:**压缩后信息保留率**(实验3 只验"摘要注入",未验"摘要是否真保留关键信息")、
-**热加载/督工的量化**。下一步优先实验 3 的量化(信息级保留率)。
+**解读**:记忆保持率 100% + 压缩保真 100%(优质摘要) → **记忆架构是最强项**。
+量化实证:关键信息经优质摘要 100% 保留,模板 0% → **主动压缩必须用提炼摘要**。
+剩余短板:**实验2热加载/实验4督工的量化**(定性已知跑通)。下一步补这两项量化。
