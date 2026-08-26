@@ -643,3 +643,19 @@ build 记录的是 2b42d03 因为那是 build 时的 HEAD;提交 167ff95 后台�
 **状态**:工作区净,全测绿。session 主动 compact(716→40,keep摘要)。基线与真差距见 round33。
 **下一步**:真差距继续——完整子代理(rutis fiber parallel)或信任边界(trusted_folders)研究;
 技能库已登记完成。台账累积自 build。
+
+## 三十五、信任边界(trusted_folders)研究判定(自主续跑)
+
+研究 grok `~/.grok/trusted_folders.toml`(动态审批记录)+ README sandbox 分级
+(off/workspace/read-only/strict,敏感路径 ~/.ssh/aws/gnupg 始终写保护)。
+
+**结论**:信任边界/沙箱属 **host(cli)层** 职责,agent crate 不重复实现
+(与 supervisor 归属 cli 层一致,统一治理)。agent 层落地了两个真实自觉:
+- 差距表 trust 行 → 已研究判定;确认仓库无敏感路径被跟踪
+- 自审清单加「提交前无敏感路径被跟踪」检查(git ls-files grep)
+不重造 host 沙箱(避免过度工程)。
+
+**提交**:be39ec2(trust 结论) + 待本次(清单自审项)
+**状态**:工作区净,全测绿。真差距:soft-trim 已修;子代理(远期)待落地。
+**下一步**:真差距——完整子代理(rutis fiber parallel)是最后的大项;或台账累积、
+技能库增补。使命保持:研究他人→量化自身→比别人好。

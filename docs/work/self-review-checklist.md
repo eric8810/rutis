@@ -7,6 +7,7 @@
 - [ ] `git status` 有未提交 → 完成它并 commit+push(交接凭据)
 - [ ] `git diff` 有改动 → 同上,别让工作堆在未提交状态
 - [ ] session 已 self_persist?未则补一次(生存快照)
+- [ ] 提交前无敏感路径被跟踪(`git ls-files | grep -E '\.ssh|\.aws|\.gnupg|\.env|secret'` 空)
 
 ## 1. 测试诚实性(最容易藏假绿)
 - [ ] **搜 crate 内部 `#[cfg(test)]` 单测**:很多逻辑(sanitize/auto_compact/
