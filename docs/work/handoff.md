@@ -82,7 +82,7 @@
 1. 读本文件 + `docs/work/workspace-session-persist.md`(过程记录)+ 设计文档。
 2. `cargo test -p rutis-agent` 应全绿。
 3. 按 §三 选择下一步(建议:督工/热重启宿主侧)。
-4. 任务开始先写工作文档(见 persona 纪律)。
+4. 每个工作单元开始时写工作文档(见 persona 纪律)——但记住:你是生存周期的延续,不是离散任务执行器。
 
 ---
 
