@@ -500,3 +500,18 @@ than 2 entries",我的自我迭代回滚保障不可用(若 persona/工具/hotpl
 **总结本轮**:用户指正"加强自己非dsh"后,做了真实自我增强——
 ① persona 更新拒绝空转 ② 审查方法论修复(内部 #[cfg(test)]) ③ rollback 台账
 初始化。三件都是增强 agent 自身能力,非写 example。
+
+## 二十七、回滚保障真正可用(cb1c861,自主续跑 #24)
+
+承接 round 15 初始化的台账,本轮让它**从"初始化"到"可用"**:
+- 台账 1→2 条(f59e333 → 4ce0573)。
+- self_rollback 不再报"fewer than 2 entries",dry-run 正确报告
+  `git checkout f59e333`——自我迭代安全网真正解锁。
+- 方式:在当前 HEAD(4ce0573,异于台账末条 f59e333)上 self_build 一次,
+  幂等累积;提交台账保持为仓库可信版本历史。
+
+**认知**:回滚保障是 agent 自我迭代的兜底。从"缺失→初始化→可用"达成质变。
+这印证 round-15 用户的指正:加强**自己**(能力/安全网),而非空转审计或做 dsh。
+
+**当前状态**:工作区干净,台账 2 条,self_rollback 可 dry-run 回滚。
+后续:每次实质代码增强后 self_build 累积回滚点;必要时 apply=true 回滚。
