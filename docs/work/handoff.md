@@ -1109,3 +1109,19 @@ codex thread_goals 目标预算(round38 defer 因"mock usage 全 0 不可测";ro
 **提交**:372b626。**状态**:工作区净。
 **下一步**:第二增量合适时机落地 / 技能库沉淀 / 维护。满足"以真实改动为主+前瞻
   可落地落地"双纪律。
+
+## 六十五、codex thread_goals 完整落地(目标预算第二增量成本硬保护)(自主续跑)
+
+承接 round63 累计 + round64 设计记录,第二增量在谨慎评估改动面
+(AgentDriver::new 仅 plugin apply 一处调用)后落地:
+- **AgentDriverPlugin.with_token_budget(budget)**:默认 None=关闭,向后兼容
+  (所有现有测试/宿主构造点不变)。
+- **跨轮成本硬保护**:run_loop 每 step 检查 session.tokens_used vs budget,
+  超限返回新 `AgentError::BudgetLimit{budget,used}`(恢复的历史累计也触发)。
+- **测试** token_budget_limit_interrupts_turn:Finish usage 150 > budget 100,
+  第二轮 step1 检查 → BudgetLimit(采用 UsageLlm2 mock)。session_persist 25/25。
+- **全景**:240 passed / 0 failed(自 236 增至 240)。codex thread_goals 完整落地
+  (round38 defer → 真实后端前提变化 → 累计+预算中断全落地)。
+
+**提交**:5086266。**状态**:工作区净,240 passed。
+**价值**:自主 agent 跨轮 token 成本硬保护完成。前瞻功能从研究→落地闭环。
