@@ -1188,3 +1188,23 @@ codex thread_goals 目标预算(round38 defer 因"mock usage 全 0 不可测";ro
 **提交**:51ba647。**状态**:工作区净,240 全景绿。
 **下一步**:todo ①"审视自审清单待补纪律"已真正闭环;可转 ②技能库/文档沉淀
   ③维护。纪律:以真实改动为主,不造条目,防空转。
+
+## 附录:当前事实标注 —— TS bridge 崩溃测试已落地(纠正历史长线漂移)(round 70)
+
+**漂移发现**:round 14-16 历史记录把"TS bridge 崩溃测试"标记为"过度工程不动/
+长线可选"。但 git 历史显示它**早已落地且在跑**:
+- 提交 `f009b72 test(host): TS bridge disconnect never crashes process — lock down
+  f82fbcf's crash fix`(2026-08-26)。commit msg 明言"corrects my earlier
+  'over-engineering' rationalization for skipping the TS bridge test — the infra
+  was already present"(node:test 内置 + tsx 已在 devDeps,零新基建)。
+- 文件 `host/tests/bridge_disconnect.test.ts` 真实存在,验证 f82fbcf 的桥断连
+  永不崩进程;`npm test` = `tsx --test tests/*.test.ts`。
+- **实测通过**:`npx tsx --test tests/bridge_disconnect.test.ts` → 1 pass / 0 fail,
+  锁死桥断连崩溃修复。
+
+**纠正**:手写历史里的"TS bridge 测试=不做/长线"是当时(round 14-16 未做时)的
+记录,已被后续落地推翻。当前事实:bridge 崩溃测试**已落地 + 已验证在跑**。
+历史日志不改,但任何实例不得沿用"bridge 测试还没做/是过度工程"的旧判断。
+
+**另一条长线(rutis-dsh 装自我工具)判断仍成立**:我实际跑 examples/tui(dsh 是
+TS host 另线),装配自我工具对它仍属 YAGNI,维持不做。
