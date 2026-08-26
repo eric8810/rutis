@@ -17,7 +17,7 @@ use aimux_core::language_model::LanguageModel;
 use rutis::{Ctx, Listener};
 use rutis_agent::{
     agent_key, llm_key, tool_call, Agent, AgentDriverPlugin, LlmResponse,
-    ScriptedLlm, SelfReloadRequested, ToolDef, ToolsPlugin, VERSION_LEDGER_PATH,
+    ScriptedLlm, SelfReloadRequested, ToolDef, ToolsPlugin,
 };
 use serde_json::{json, Value};
 
@@ -242,6 +242,24 @@ async fn self_check_runs_command_via_bash() {
     let (ok, out) = run(&def, json!({ "command": "echo self-check-ok" })).await;
     assert!(ok, "{out}");
     assert!(out.contains("self-check-ok"), "{out}");
+}
+
+#[tokio::test]
+async fn self_check_appends_health_summary_parsing_test_result() {
+    let root = Ctx::root().unwrap();
+    let def = rutis_agent::self_check(root.clone());
+    // 构造含 cargo test output 的轻命令,验证 [health] 摘要正确累加 passed/failed
+    let out = r#"test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"#;
+    // 用 bash 直接输出完整内容(含换行),模拟 cargo test 的 test result 行
+    let cmd = format!(
+        "bash -c 'printf %s \"{out}\"'"
+    );
+    let (ok, res) = run(&def, json!({ "command": cmd })).await;
+    assert!(ok, "{res}");
+    // 原始输出透传 + [health] 摘要(30 = 25+5)
+    assert!(res.contains("25 passed"), "{res}");
+    assert!(res.contains("[health] GREEN: 30 passed / 0 failed"), "{res}");
 }
 
 #[tokio::test]

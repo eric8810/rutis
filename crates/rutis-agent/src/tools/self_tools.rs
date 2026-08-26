@@ -540,12 +540,43 @@ pub fn self_build(ctx: Ctx) -> ToolDef {
     )
 }
 
+/// 从 cargo test/bash 输出追加「健康摘要」:统计所有 `test result:` 行的 passed,
+/// 并在结果末尾附一行 `[health]`。与 self_build 的 `[ledger] recorded` 反馈对称,
+/// 让"检查工具"在长输出下也能一眼看到健康结论(round82 改进)。
+fn health_summary(out: Value) -> Value {
+    let Value::String(s) = &out else { return out };
+    let mut passed = 0u64;
+    let mut failed = 0u64;
+    for line in s.lines() {
+        let t = line.trim();
+        if !t.starts_with("test result:") {
+            continue;
+        }
+        // `test result: ok. N passed; M failed; ...` | `test result: FAILED. ...`
+        if let Some(rest) = t.strip_prefix("test result: ") {
+            if let Some(p) = rest.split_once(" passed") {
+                let n = p.0.rsplit(' ').next().and_then(|x| x.parse::<u64>().ok()).unwrap_or(0);
+                passed += n;
+            }
+            if let Some(f) = rest.split_once(" failed") {
+                let n = f.0.rsplit(' ').next().and_then(|x| x.parse::<u64>().ok()).unwrap_or(0);
+                failed += n;
+            }
+        }
+    }
+    Value::String({
+        let status = if failed > 0 { "RED" } else { "GREEN" };
+        format!("{s}\n[health] {status}: {passed} passed / {failed} failed")
+    })
+}
+
 /// `self_check`:默认跑健康基线三 crate(`rutis-agent + rutis-dsh + rutis`,即 240
-/// 全景;round71-72 确立的口径,勿含 cordis 避免集成测试假红)。复用 bash。
+/// 全景;round71-72 确立的口径,勿含 cordis 避免集成测试假红)。复用 bash,
+/// 末尾附 `[health] N passed / M failed` 摘要(round81 改默认 + round82 加摘要)。
 pub fn self_check(_ctx: Ctx) -> ToolDef {
     ToolDef::new(
         "self_check",
-        "Run the health-baseline tests (`cargo test -p rutis-agent -p rutis-dsh -p rutis`, the 240-panorama) via bash. Optional `command` overrides the test command (tests use this).",
+        "Run the health-baseline tests (`cargo test -p rutis-agent -p rutis-dsh -p rutis`, the 240-panorama) via bash, appending a `[health] N passed / M failed` summary. Optional `command` overrides the test command (tests use this).",
         json!({
             "type": "object",
             "properties": {
@@ -557,7 +588,8 @@ pub fn self_check(_ctx: Ctx) -> ToolDef {
             let command = args["command"]
                 .as_str()
                 .unwrap_or("cargo test -p rutis-agent -p rutis-dsh -p rutis");
-            bash_run(&format!("{command} 2>&1"))("".into()).await
+            let out = bash_run(&format!("{command} 2>&1"))("".into()).await?;
+            Ok(health_summary(out))
         },
     )
 }
