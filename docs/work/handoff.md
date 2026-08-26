@@ -355,3 +355,20 @@ minimal_tools + self_tools + ReloadHandler(SelfReloadRequested) + SelfDriven。
       rutis-dsh 装自我工具=前置优化(我实际跑 examples/tui,违反 YAGNI,不做)
 => 记录"此刻无事可做"→ 降频待命,保持检查。
 本轮同样是**克制的产出**:确认状态健康、维持两处长线决策不制造新活。
+
+## 十七、新增文档-代码漂移检查(自主续跑 #7)
+
+在惯性全绿核查外引入新维度:**文档-代码漂移检查**。
+验证 handoff/checklist 引用的关键机制仍在代码中:
+- auto_compact(driver) ✓ 3 处
+- turn_lock(互斥) ✓ 3 处
+- sanitize/truncate_to(session) ✓ 4 处
+- SelfDriven spawn 延迟(auto.rs) ✓ 4 处
+全部完好,无漂移(文档说做了但代码已删的假象不存在)。
+
+把"漂移监测"补入 checklist §4.5(grep -c 验证):
+文档引用的机制若 == 0 说明漂移——优先修文档或补回归测试。
+这保证 handoff/checklist 本身可信,不是"纸面记录、代码已变"。
+
+=> 本轮产出:引入漂移检查维度 + 验证无漂移 + 沉淀进 checklist。
+工作区净,维持两处长线不做决策,降频待命。
