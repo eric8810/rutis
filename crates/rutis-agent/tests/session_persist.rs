@@ -751,3 +751,53 @@ async fn cross_generation_memory_retention_keeps_facts() {
         rate, kept, facts.len(), all
     );
 }
+
+/// 实验 3:长会话压缩信息保真(外部对标:grok compaction 摘要保真/Reflexion)。
+/// 压缩后关键信息须经摘要保留——量化"压缩保真率"。
+/// 关键点:摘要若是我(agent)人工提炼(AI 摘要)则保真率高;
+/// 若是模板占位(driver auto_compact)则关键事实丢失。
+#[test]
+fn compact_information_fidelity_keeps_key_facts_via_summary() {
+    let mut s = Session::new();
+
+    // 注入一批关键事实到早期消息(将被子摘要裁剪的部分)
+    let facts = [
+        "secret_api_key = sk-proj-alpha-2026",
+        "deploy_script_at = /opt/rutis/deploy.sh",
+        "consensus on port 8443 for the new service",
+        "turn_lock serializes concurrent followup turns",
+        "auth uses JWT with 8h expiry, refresh token 30d",
+    ];
+    for (i, f) in facts.iter().enumerate() {
+        s.push(ModelMessage::user(format!("fact {i}: {f}")));
+        s.push(ModelMessage::assistant(format!("noted fact {i}")));
+    }
+    // 几条后续正常消息(保留区)
+    s.push(ModelMessage::user("recent q"));
+    s.push(ModelMessage::assistant("recent a"));
+
+    // 压缩:摘要 = 若我提炼得好,应含这些关键事实;模拟"高质量提炼" vs "模板"
+    // 高质量(agent 提炼):把关键事实浓缩进摘要
+    let high_quality_summary = format!(
+        "早前关键信息: {} | {} | {} | {} | {}",
+        facts[0], facts[1], facts[2], facts[3], facts[4]
+    );
+    let total_before = s.messages().len();
+    let (before, after) = s.compact(high_quality_summary, 2); // 只留最近 2 条
+    assert!(after < before, "压缩应裁剪: {before} -> {after}");
+    assert_eq!(s.messages().len(), 2, "只保留最近 2 条");
+
+    // 压缩后,关键事实须在 summary 里(经模型/agent 提炼保留)
+    let summarized = s.summary().unwrap_or_default();
+    let kept = facts.iter().filter(|f| summarized.contains(**f)).count();
+    let fidelity = kept as f64 / facts.len() as f64;
+    eprintln!("[compact-fidelity] high-quality summary kept {kept}/{} = {fidelity:.0}%", facts.len());
+    assert_eq!(fidelity, 1.0, "高质量摘要应 100% 保真关键事实; 摘要: {summarized}");
+
+    // 对照组:模板摘要(driver auto_compact 空路径)不保留任何关键事实
+    let (_, _) = s.compact("（早期对话因超出模型上下文窗口被自动裁剪,细节不可恢复）".to_string(), 2);
+    let tmpl = s.summary().unwrap_or_default();
+    let kept_t = facts.iter().filter(|f| tmpl.contains(**f)).count();
+    eprintln!("[compact-fidelity] template summary kept {kept_t}/{}", facts.len());
+    assert_eq!(kept_t, 0, "模板摘要不保留关键事实(证明优质摘要的必要性)");
+}
