@@ -1077,3 +1077,21 @@ cwd-relative,已全修:
 
 **提交**:388635f。**状态**:工作区净,236 全景绿。
 **下一步**:内核边界已系统审读完备;可转向文档沉淀/未来方向规划/维护。
+
+## 六十三、落地前瞻项:跨轮 token 累计(round38 defer → 真实后端前提消除)(自主续跑)
+
+内核/驱动边界系统审读完备后转向"未来方向规划" → 重新评估被 defer 的
+codex thread_goals 目标预算(round38 defer 因"mock usage 全 0 不可测";round44
+实机后有真实后端,前提消除)。落地**第一增量**:
+- **Session**:`tokens_used`(default-0,serde 兼容旧文件)+ `add_tokens`(saturating);
+  persist/restore 保留。
+- **driver**:流式 `StreamPart::Finish` 捕获 `usage`(input+output total),
+  try_lock 安全累计(不阻塞循环)。
+- **self_status** 暴露 "tokens used"。
+- **测试**:session 累计/饱和/跨重启 roundtrip + 旧文件→0;driver 捕获链路
+  (自定义 UsageLlm mock,input10+output5=15,断言累计)。session_persist 24/24,
+  全套绿。
+
+**提交**:cec3054。**状态**:工作区净。
+**价值**:为未来 token_budget 上限/跨轮成本保护铺路(本轮 metrics 建立,预算
+中断留后续)。真实工程从"修 bug"延伸到"前瞻功能落地"。
