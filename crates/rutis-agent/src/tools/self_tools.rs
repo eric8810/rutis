@@ -108,8 +108,23 @@ pub fn self_tools(ctx: Ctx) -> Vec<ToolDef> {
 /// 能力库。技能 = 方法论/能力单元(何时用/怎么做/到哪看),避免临场摸索与
 /// 重复发明。`skill` 列全部;`skill SKILL-X1|名称` 返回匹配条目。
 /// 动态读文件,故技能库内容演进后工具自动反映,跨重启稳定(非热加载易失)。
+/// 技能库 index 路径解析:cwd 无关。
+///
+/// 优先用编译期注入的 `CARGO_MANIFEST_DIR`(本 crate 目录)上溯到仓库根定位
+/// `docs/skills/index.md`——不依赖运行时 cwd(cargo test/integration 以 crate 为
+/// cwd,子目录调起 CLI 也会换 cwd,相对路径会因找不到技能库而坏,见
+/// self-review-checklist 的 cwd 敏感警告)。回退到相对路径以兼容非 cargo 部署。
+fn skills_index_path() -> std::path::PathBuf {
+    let manifest_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let repo_relative = manifest_root.join("../../docs/skills/index.md");
+    if repo_relative.exists() {
+        return repo_relative;
+    }
+    std::path::PathBuf::from("docs/skills/index.md")
+}
+
 pub fn skill() -> ToolDef {
-    const SKILLS_INDEX: &str = "docs/skills/index.md";
+    let skills_index = std::sync::Arc::new(skills_index_path());
     ToolDef::new(
         "skill",
         "Retrieve a skill from the agent skill library (docs/skills/index.md). Pass a SKILL code (e.g. SKILL-U1) or a name keyword to get the matching skill's doc path + usage; 'list' (or no arg) to list all skills. Lets you reuse known methodologies instead of reinventing them.",
@@ -120,33 +135,39 @@ pub fn skill() -> ToolDef {
             },
             "required": []
         }),
-        |args: Value| async move {
-            let key = args["key"].as_str().unwrap_or("list").trim();
-            let index = std::fs::read_to_string(SKILLS_INDEX)
-                .map_err(|e| format!("error: read skills index {SKILLS_INDEX}: {e}"))?;
-            // 提取索引主体(跳过标题区,从第一个 '- **SKILL' 起)
-            let body = index.split_once("## ").map(|(_, b)| b).unwrap_or(&index);
-            if key != "list" && !key.is_empty() {
-                let needle = if key.to_uppercase().starts_with("SKILL-") {
-                    key.to_uppercase()
-                } else {
-                    key.to_string()
-                };
-                let mut found: String = String::new();
-                for line in body.lines() {
-                    let up = line.to_uppercase();
-                    if up.contains(&needle) || line.to_lowercase().contains(&key.to_lowercase()) {
-                        found.push_str(line.trim_start());
-                        found.push('\n');
+        {
+            let skills_index = skills_index.clone();
+            move |args: Value| {
+                let skills_index = skills_index.clone();
+                async move {
+                    let key = args["key"].as_str().unwrap_or("list").trim();
+                    let index = std::fs::read_to_string(skills_index.as_ref())
+                        .map_err(|e| format!("error: read skills index {}: {e}", skills_index.display()))?;
+                    // 提取索引主体(跳过标题区,从第一个 '- **SKILL' 起)
+                    let body = index.split_once("## ").map(|(_, b)| b).unwrap_or(&index);
+                    if key != "list" && !key.is_empty() {
+                        let needle = if key.to_uppercase().starts_with("SKILL-") {
+                            key.to_uppercase()
+                        } else {
+                            key.to_string()
+                        };
+                        let mut found: String = String::new();
+                        for line in body.lines() {
+                            let up = line.to_uppercase();
+                            if up.contains(&needle) || line.to_lowercase().contains(&key.to_lowercase()) {
+                                found.push_str(line.trim_start());
+                                found.push('\n');
+                            }
+                        }
+                        if found.is_empty() {
+                            Ok(Value::String(format!("skill '{key}' not found. List all with `skill list`.")))
+                        } else {
+                            Ok(Value::String(found))
+                        }
+                    } else {
+                        Ok(Value::String(body.trim_start().to_string()))
                     }
                 }
-                if found.is_empty() {
-                    Ok(Value::String(format!("skill '{key}' not found. List all with `skill list`.")))
-                } else {
-                    Ok(Value::String(found))
-                }
-            } else {
-                Ok(Value::String(body.trim_start().to_string()))
             }
         },
     )

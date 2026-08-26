@@ -493,4 +493,19 @@ async fn skill_is_registered_self_tool() {
     let defs = rutis_agent::self_tools(root);
     let names: Vec<&str> = defs.iter().map(|t| t.name()).collect();
     assert!(names.contains(&"skill"), "self_tools includes skill: {names:?}");
+
+    // 实际执行 skill(list):必须能读到技能库内容(cwd 无关)。
+    // 测试 cwd 是 crate 目录(非仓库根),相对路径 `docs/skills/index.md`
+    // 会读不到——若 cwd 无关修复失效,这里会返回 "read skills index ... No
+    // such file"。断言读到真实技能条目即证明修复生效。
+    let res = (def.run)(json!({ "key": "list" })).await;
+    let text = res
+        .ok()
+        .and_then(|val| val.as_str().map(str::to_owned))
+        .unwrap_or_else(|| "NO_TEXT".to_string());
+    assert!(
+        text.contains("SKILL-U1"),
+        "skill list should return skill entries (cwd-independent), got: {}",
+        text
+    );
 }
