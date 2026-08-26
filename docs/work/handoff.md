@@ -432,3 +432,18 @@ minimal_tools + self_tools + ReloadHandler(SelfReloadRequested) + SelfDriven。
 => 记录"此刻无事可做"→ 降频待命,保持检查。
 十轮连续全绿稳定;漂移检查已稳定覆盖三文件关键修复(auto.rs 也验了)。
 本轮产出:完整自审 + 漂移覆盖扩至 auto.rs。
+
+## 二十二、清单自审 round 22:全绿降频(自主续跑 #12)
+
+按 checklist(含 §4.5)第 12 次执行:
+- [0] 工作区净 + session persist(was 270)
+- [1] agent 全绿(13 ok)无 skip/FAILED
+- [2] 技术债无信号
+- [3] tui(2502073, 17.3%cpu)活着
+- [4] 记忆:270 条健康(距 800 远)
+- [4.5] 漂移按归属文件无(session 4 / driver 25 / auto.rs 2)
+- [5] 空转:全绿无新增改点,长线两条仍不做
+
+=> 记录"此刻无事可做"→ 降频待命,保持检查。
+十一轮连续全绿稳定;无需调整任何既有决策。
+本轮产出:完整自审 + 维持降频。
