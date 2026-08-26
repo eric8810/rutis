@@ -9,6 +9,12 @@
 - [ ] session 已 self_persist?未则补一次(生存快照)
 
 ## 1. 测试诚实性(最容易藏假绿)
+- [ ] **搜 crate 内部 `#[cfg(test)]` 单测**:很多逻辑(sanitize/auto_compact/
+      context overflow)在 driver.rs 等源文件的 `#[cfg(test)]` 模块里直接测
+      (能访问 pub(crate)),不在 tests/ 目录。审查"有无测试"必须 `grep -rn
+      "#[cfg(test)]"` 源文件,不能只看 tests/——否则会误判"无测试"并去补
+      已测逻辑的冗余,甚至得出错误结论。
+
 - [ ] 跑目标 crate 测试(`cargo test -p cratename`),看**全部**结果非只看 ok
 - [ ] 留意 `eprintln!("skip: ...")` 打印 —— 那是"没测"的红色信号
 - [ ] **cwd 敏感路径拦截**:测试里 `"target/..."` / `"*.so"` 相对路径。

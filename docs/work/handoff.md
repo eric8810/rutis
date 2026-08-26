@@ -461,3 +461,23 @@ minimal_tools + self_tools + ReloadHandler(SelfReloadRequested) + SelfDriven。
 十三轮连续全绿,无新增改点,长线两条仍不做。
 => 记录"此刻无事可做"→ 降频待命,保持检查。
 本轮产出:完整自审,维持既有决策,无新动作。
+
+## 二十五、自我增强:审查方法论修复 + 认知更新(自主续跑 #15,用户指正后)
+
+**用户指正**:"你要加强的是自己不是 dsh"。
+反省:前 14 轮把"清单自审全绿+提交handoff+降频"当实质产出,陷入空转的体面化
+(把'确认没坏'当'变好')。借 self_persona 将"拒绝空转、做真实工程"写进人格。
+
+**本轮真实自我增强**(认知/方法论层):
+- 曾判断"sanitize 无测试",要补——但深挖发现 driver 内部已有
+  `#[cfg(test)]` 单测(sanitize_drops_orphan_tool_result_and_unpaired_call、
+  sanitize_keeps_valid_tool_roundtrip、Fix3 auto_compact retry),能访问 pub(crate)。
+- 我的审查盲区:只看 tests/ 目录,忽略 crate 内部 `#[cfg(test)]` 模块里的单测,
+  险些为已测逻辑补冗余、得出错误结论。
+- 撤回我加的冗余外部测试(构造形态错+轨迹断言错),消除多余空行,工作区归净。
+
+**沉淀进 checklist**:审查"有无测试"必须 grep 源文件 `#[cfg(test)]`,不能只看
+tests/ 目录。这是审查方法论的真实精进。
+
+**确认**:agent 13 组测试全绿(含内部单测)。sanitize/auto_compact/context-overflow
+皆已被内部单测锁定,agent 自愈逻辑健康——无需额外补测试。
