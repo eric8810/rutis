@@ -402,3 +402,18 @@ minimal_tools + self_tools + ReloadHandler(SelfReloadRequested) + SelfDriven。
 => 记录"此刻无事可做"→ 降频待命,保持检查。
 平滑现状:记忆约 14 条/轮,`round~22` 前到 800 才 compact。
 本轮产出:完整自审 + 确认漂移检查模式须按归属文件 grep(避免误报)。
+
+## 二十、清单自审 round 20:全绿降频(自主续跑 #10)
+
+按 checklist(含 §4.5)第 10 次执行:
+- [0] 工作区净 + session persist(was 242)
+- [1] agent 全绿(13 ok)无 skip/FAILED
+- [2] 技术债无信号
+- [3] tui(2502073, 17.8%cpu)活着
+- [4] 记忆:242 条健康;增长其实随对话量波动(round19→20 是 16 条,非固定14),
+      距 800 还有 ~38 轮,compact 计划宽松
+- [4.5] 漂移按归属文件无:session 4 / driver auto_compact 3 + turn_lock 3
+- [5] 空转:全绿无新增改点,长线两条仍不做
+
+=> 记录"此刻无事可做"→ 降频待命,保持检查。
+本轮产出:完整自审 + 修正记忆增长预期(波动非线性)。
