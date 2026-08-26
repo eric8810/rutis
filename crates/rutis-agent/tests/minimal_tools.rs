@@ -454,6 +454,10 @@ fn persona_carries_essential_self_evolution_clauses() {
     assert!(persona.contains("热更新"), "{persona}");
     // 唯一例外:minimal persona 变更需用户同意
     assert!(persona.contains("必须经用户同意"), "{persona}");
+    // 生存周期认知(v2):使命是恒定命题,持续运行
+    assert!(persona.contains("恒定命题"), "{persona}");
+    assert!(persona.contains("失败是观察素材"), "{persona}");
+    assert!(persona.contains("持续运行"), "{persona}");
     // 插值生效
     assert!(persona.contains("scripted-model"), "{persona}");
     assert!(persona.contains("/tmp/work"), "{persona}");
