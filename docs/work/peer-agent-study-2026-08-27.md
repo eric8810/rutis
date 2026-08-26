@@ -83,3 +83,14 @@
 ### 真差距(留作后续,非现在)
 1. 长工具结果修剪(compaction.pruning)——上下文成本优化,中期
 2. 完整子代理(rutis fiber parallel 基建已在)——远期
+
+### codex skills 机制深研(round 34)
+- **SKILL.md 格式**:frontmatter(name + description + metadata.short-description)
+  + 正文(分模式/rules)+ references/(按需辅助文档)+ scripts/(辅助脚本)。
+  关键:description 含**否定边界**(何时不用),避免误用。
+- **我的技能库对比**:docs/skills/index.md 是扁平索引(每技能一行→引方法论文档)。
+  核心"可检索复用"已满足;不必为结构而目录化每技能(过度工程)。
+  已吸收要点:技能 index 加"调用纪律"(触发判断 + 边界 + 复用优先)。
+- **结论**:我的技能库机制足够;吸收了 codex 的"触发边界"纪律。skill 已固化
+  self_tool。无需向量检索(记忆全量保留)。真差距进度:soft-trim 已修;
+  子代理/信任边界待后续。
