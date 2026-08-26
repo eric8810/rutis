@@ -469,9 +469,10 @@ impl AgentDriver {
                             .unwrap_or(0)
                             .saturating_add(usage.output_tokens.total.unwrap_or(0)) as u64;
                         if n > 0 {
-                            if let Ok(mut s) = self.session.try_lock() {
-                                s.add_tokens(n);
-                            }
+                            // turn_lock 互斥保证同一时刻仅本 followup 在改 session,
+                            // 循环内无其它 session 持锁 → lock() 安全;try_lock 在
+                            // 罕见失败时静默漏记成本,改 lock() 保证可靠累计。
+                            self.session.lock().unwrap().add_tokens(n);
                         }
                     }
                     Chunk::Part(Ok(_)) => {}

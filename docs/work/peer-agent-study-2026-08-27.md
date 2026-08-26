@@ -86,6 +86,16 @@
   改核心循环(stream→usage 采集 + 跨轮记账 + 超限状态)成本中高、当前无真收益。
   → 记录为前瞻设计:真实后端跑起来后,在 driver 循环加"累计 usage vs token_budget
   超限中断 + budget_limited 状态"。现在不动核心循环(避免为不可测机制引入风险)。
+- **已落地(round63)**:真实后端确立后(round44),前提消除,落地第一增量——
+  Session.tokens_used(跨轮累计,serde 兼容)+ add_tokens(saturating)+ driver
+  流式 Finish 捕获 usage 累计 + self_status 暴露。测试含 driver 捕获链路
+  mock(input10+output5=15)。session_persist 24/24。
+- **第二增量设计(round64 注,未仓促落)**:token_budget 上限中断——AgentDriver
+  加 with_token_budget(默认 None=无预算,向后兼容),驱动循环每轮检查
+  tokens_used >= budget 时中断(新增 AgentError::BudgetLimit 或标记)。需
+  AgentDriver::new 签名 + plugin 装配 + 宿主构造点联动,改动面大,宜谨慎分步。
+  本轮记录设计,不仓促改多构造点(重 cost-benefit:已提供成本可观测,硬中断留
+  合适时机)。
 
 ## 我 vs 他人的实质差距(落到可增强)
 
