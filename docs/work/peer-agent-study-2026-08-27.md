@@ -20,6 +20,20 @@
 | 目标追踪 | — | **goals_1.sqlite** | todo(单值) |
 | 会话工作 | sessions/ | sessions/ + worktrees | .rutis/session.json |
 
+## grok hooks 机制深研(round 39)
+- **grok hooks**:在 `.grok/hooks/` + config 层 `[[hooks.<Event>]]` 定义项目脚本,
+  在工具前后(pre/post-tool-use)和会话开始/结束跑。`matcher = "Bash|Write|Edit"`
+  按工具匹配;hooks 被显式信任才执行。本质 = 工具/会话生命周期挂钩脚本。
+- **我已有等价物(更内建)**:driver「工具三段管线」= `tools/pre-execute` 门控
+  (fail-closed,可拒绝)→ 执行 → `tools/post-execute`(accept/replace)。经 events
+  broadcast,listener 可见 `ToolCall`(含 tool_name)实现 matcher 过滤——覆盖
+  grok PreToolUse/PostToolUse 核心,无需外部脚本进程。
+- **无 session start/end hook**:但有 session start 事件与每 turn persist(启动即
+  可监听事件);end 由持久化覆盖。→ 不需额外落地。
+- **判定**:hooks 机制被我现有三段管线等价覆盖,不额外引入外部脚本系统
+  (避免过度工程)。研究消化闭环。
+- 同 codex goals 深研(round 38):研究他人 → 认清我已有 → 判断不需要。
+
 ## codex 目标预算(thread_goals)深研(round 38)
 - **表结构**:`thread_goals`(thread_id PK, goal_id, objective, status
   CHECK active/paused/blocked/usage_limited/budget_limited/complete,

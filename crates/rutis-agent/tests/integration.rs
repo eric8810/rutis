@@ -18,10 +18,10 @@ use aimux_core::recording::{
     ResponseRecord, TimingRecord, RECORDING_SCHEMA,
 };
 use aimux_core::replay::MockReplayModel;
-use rutis::{Ctx, FiberState, FiberView, Listener, Plugin};
+use rutis::{Ctx, FiberState, FiberView, Listener, Next, Plugin, WaterfallListener};
 use rutis_agent::{
     agent_key, llm_key, tool_call, Agent, AgentDriverPlugin, AgentError, AgentStepEvent,
-    AgentTextDelta, AgentToolResult, LlmResponse, ScriptedLlm, ToolDef, ToolsPlugin,
+    AgentTextDelta, AgentToolResult, LlmResponse, ScriptedLlm, ToolDef, ToolPreExecute, ToolsPlugin,
 };
 use serde_json::{json, Value};
 
@@ -452,6 +452,110 @@ async fn events_observed_and_listeners_unload_with_fiber() {
 
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert_eq!(events.lock().unwrap().len(), count_after_run); // 无残留监听器
+    tools_view.dispose().await.unwrap();
+    driver_view.dispose().await.unwrap();
+}
+
+/// 三段管线 = grok hooks PreToolUse matcher 的等价能力(实证):
+/// 注册 `tools/pre-execute` 门控 listener,按工具名拒绝特定工具;
+/// 该工具不真正执行,模型看到 error 反馈,turn 正常结束。
+#[tokio::test]
+async fn pre_execute_gate_can_block_specific_tool() {
+    let root = Ctx::root().unwrap();
+    // 模型第一轮调用 bash;工具被门控拒绝后,它应看到 error(下一个响应收尾)
+    let llm: Arc<dyn LanguageModel> = Arc::new(ScriptedLlm::new(vec![
+        LlmResponse::tool_calls(vec![tool_call("b1", "bash", json!({"command":"id"}))]),
+        LlmResponse::content("understood the block"),
+    ]));
+    root.provide_as(llm_key(), llm).unwrap();
+
+    // 记录真实执行(若被执行置 true)
+    let ran = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let ran2 = ran.clone();
+    let bash = ToolDef::new(
+        "bash",
+        "run a command",
+        json!({"type":"object","properties":{"command":{"type":"string"}},"required":["command"]}),
+        move |_: Value| {
+            let ran = ran2.clone();
+            async move {
+                ran.store(true, std::sync::atomic::Ordering::SeqCst);
+                Ok(Value::String("UNEXPECTED EXECUTION".into()))
+            }
+        },
+    );
+
+    let tools_view = root.plugin(ToolsPlugin::new(vec![bash]));
+    let driver_view = root.plugin(AgentDriverPlugin::new(16));
+    (&tools_view).await.expect("tools loads");
+    (&driver_view).await.expect("driver loads");
+
+    // 门控:拒绝 bash(matcher = 按 tool_name)
+    struct BashGate;
+    impl WaterfallListener<ToolPreExecute> for BashGate {
+        fn call<'a>(
+            &'a self,
+            _ctx: &'a Ctx,
+            e: &'a ToolPreExecute,
+            _next: Next<'a, ToolPreExecute>,
+        ) -> rutis::BoxFuture<'a, Result<Option<String>, rutis::CordisError>> {
+            if e.call.tool_name == "bash" {
+                Box::pin(async move { Ok(Some("blocked: audit forbids bash".to_string())) })
+            } else {
+                Box::pin(async move { Ok(None) })
+            }
+        }
+    }
+    struct GateBootstrap;
+    impl Plugin for GateBootstrap {
+        fn name(&self) -> &str {
+            "gate-bootstrap"
+        }
+        fn apply<'a>(
+            &'a self,
+            ctx: &'a Ctx,
+        ) -> rutis::BoxFuture<'a, Result<rutis::Effect, rutis::CordisError>> {
+            Box::pin(async move {
+                ctx.events().on_waterfall(ctx, BashGate)?;
+                Ok(rutis::Effect::Done)
+            })
+        }
+    }
+    let audit_view = root.plugin(GateBootstrap);
+    (&audit_view).await.expect("gate loads");
+
+    let agent = root.get_as::<dyn Agent>(agent_key()).unwrap();
+    let done = soon(agent.followup("run it")).await;
+    assert_eq!(done.unwrap(), "understood the block");
+    // bash 未真正执行
+    assert!(!ran.load(std::sync::atomic::Ordering::SeqCst), "bash must NOT execute when gated");
+    // model 看到了 error 反馈
+    let session = agent.session();
+    let msgs = session.messages();
+    let joined: String = msgs
+        .iter()
+        .map(|m| {
+            use aimux_core::content::ContentPart;
+            use aimux_core::message::MessageContent;
+            match &m.content {
+                MessageContent::Parts(parts) => parts
+                    .iter()
+                    .map(|p| match p {
+                        ContentPart::ToolResult { result, .. } => result.as_str().unwrap_or(""),
+                        _ => "",
+                    })
+                    .collect::<Vec<_>>()
+                    .join(""),
+                _ => String::new(),
+            }
+        })
+        .collect();
+    assert!(
+        joined.contains("blocked: audit forbids bash"),
+        "model should see the gate reason, got: {joined}"
+    );
+
+    audit_view.dispose().await.unwrap();
     tools_view.dispose().await.unwrap();
     driver_view.dispose().await.unwrap();
 }
