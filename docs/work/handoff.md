@@ -760,3 +760,22 @@ build 记录的是 2b42d03 因为那是 build 时的 HEAD;提交 167ff95 后台�
 
 **状态**:工作区净,全测绿。差距表记忆/技能/信任/子代理/hooks/Dream 全有归宿。
 **下一步**:深化研究(worktrees/session-archival/新对象) × 技能库沉淀 × 维护。
+
+## 四十二、grok sessions 深研 → 判定已覆盖(恢复/截断/压缩全有)(自主续跑)
+
+研究 grok 17-sessions.md(uodates.jsonl/summary.json/compaction_checkpoints;能力:
+  /resume /rewind /compact /flush)。
+- **逐项对照**,我全有等价:
+  | grok | 我 |
+  |------|-----|
+  | /resume | Session::restore + 多代 |
+  | /rewind 截断 | Session::truncate_to |
+  | /compact | compact + auto_compact(100%保真) |
+  | compaction_checkpoints | 价值低(我压缩非破坏,摘要含关键信息) |
+- **rewind 恢复文件** → host/git 层职责(同 trust-boundary)。
+- **session 持久化健壮性确认**:原子写(tmp+rename) + restore 静默降级,无需
+  updates.jsonl 权威日志(我非多 session,单文件+原子写已够)。
+- **判定**:无新落地,研究消化闭环。b1d28f2。
+
+**状态**:工作区净,编译零警告。差距表记忆/技能/信任/子代理/hooks/Dream/sessions
+  全有归宿。下一步:worktrees/session-archival/新对象 研究 × 技能库沉淀 × 维护。
