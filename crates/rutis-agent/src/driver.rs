@@ -585,6 +585,11 @@ pub(crate) fn is_context_overflow(err: &str) -> bool {
         "longer than",
         "maximum context",
         "token limit",
+        // 真实 provider 遗漏格式(round57 发现):OpenAI "Request too large for
+        // model gpt-4o";Anthropic "supports at most N tokens"。漏判会让
+        // auto-compact 不触发、长会话退化(虽有 bounded 降级,但主动机制应覆盖)。
+        "too large",
+        "at most",
     ]
     .iter()
     .any(|k| s.contains(k))
@@ -869,8 +874,14 @@ mod tests {
         assert!(is_context_overflow("context length exceeded: 350000 > 128000"));
         assert!(is_context_overflow("prompt is too long: 50000 tokens"));
         assert!(is_context_overflow("This model's maximum context window is 128K"));
-        assert!(!is_context_overflow("tool execution rejected"));
-        assert!(!is_context_overflow("network timeout"));
+        assert!(is_context_overflow("400 Bad Request: Request too large for model gpt-4o"));
+        assert!(is_context_overflow("This model supports at most 128000 tokens"));
+        // 反向:明显非上下文超限不应误判。注意"at most"+"too large"是安全
+        // 的过匹配(注释:误判最多一次多余 compact,有界);真正的反例是
+        // 不含任何关键词的普通失败。
+        assert!(!is_context_overflow("tool execution rejected: unauthorized access"));
+        assert!(!is_context_overflow("network timeout, retry later"));
+        assert!(!is_context_overflow("file not found"));
     }
 
     /// Fix 2 原语:truncate_to 把 session 截回指定长度(幂等)。
