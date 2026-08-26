@@ -505,3 +505,25 @@ async fn skill_is_registered_self_tool() {
         text
     );
 }
+
+/// cwd 无关路径解析:default_ledger_path / default_handoff_path 必须指向
+/// 仓库根的绝对路径(不是 runtime-cwd 相对)。测试 cwd = crate 目录,相对
+/// 解析会落到 crates/rutis-agent/...;cwd 无关实现应解析到仓库根父目录。
+/// 仅检查路径解析(不写文件,无副作用)。
+#[test]
+fn default_paths_are_cwd_independent_and_repo_rooted() {
+    let ledger = rutis_agent::default_ledger_path();
+    let handoff = rutis_agent::default_handoff_path();
+    // 都应落在仓库根 docs/work/ 下——断言父目录存在(仓库根 docs/work)
+    let work_dir = ledger.parent().expect("ledger has parent");
+    assert!(work_dir.join("version-ledger.json").exists()
+        || work_dir.join("handoff.md").exists(),
+        "ledger parent should be repo-root docs/work (got {work_dir:?})");
+    // 绝对路径(非裸相对)
+    assert!(ledger.is_absolute() || !ledger.starts_with("docs"), "ledger should be repo-rooted, got {ledger:?}");
+    assert_eq!(
+        ledger.parent(),
+        handoff.parent(),
+        "ledger and handoff share repo-root docs/work parent"
+    );
+}

@@ -90,7 +90,7 @@ pub use tools::replace_text::replace_text_tool;
 pub use tools::self_tools::{
     self_build, self_check, self_compact, self_hotload, self_persist, self_reload,
     self_persona, self_rollback_tool, self_status, self_todo, self_tools, skill, VersionLedger,
-    VERSION_LEDGER_PATH, default_ledger_path,
+    VERSION_LEDGER_PATH, default_handoff_path, default_ledger_path,
 };
 pub use tools::{tools_key, ToolDef, ToolOutput, ToolRegistry, ToolsPlugin};
 pub use tui::TuiPlugin;

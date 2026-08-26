@@ -29,20 +29,29 @@ use crate::tools::{bash::bash_tool, hotplug::hotplug_load, ToolDef, ToolRegistry
 /// 保留字符串常量供测试与文档引用。
 pub const VERSION_LEDGER_PATH: &str = "docs/work/version-ledger.json";
 
-/// cwd 无关的默认台账定位:编译期 CARGO_MANIFEST_DIR 上溯到仓库根,
-/// 避免运行时在非仓库根 cwd 下(如部署 agent 从别处启动)把台账写进
-/// 错误目录(cwd 敏感,同 round48 skill 修复)。
-///
-/// 不依赖 `exists()`(台账首次创建时文件尚不存在仍应落仓库根),只要
-/// manifest 所在的仓库结构存在即用绝对路径;回退相对路径仅兜非标准部署。
-pub fn default_ledger_path() -> std::path::PathBuf {
+/// cwd 无关的仓库根定位帮助函数:把 `repo_docs_rel`(相对 docs/ 的路径,
+/// 如 "work/version-ledger.json")解析为仓库根绝对路径,失败回退原始相对值。
+fn repo_root_path(repo_docs_rel: &str) -> std::path::PathBuf {
     let repo_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
-        .join(VERSION_LEDGER_PATH);
+        .join(repo_docs_rel);
+    // 只要仓库结构的根目录存在即视为可用(文件可能尚未创建,首次 self_build/
+    // reload 时);回退相对路径仅兜非标准部署(cargo 外单独拿源码跑)。
     if repo_path.parent().map_or(false, |p| p.exists()) {
         return repo_path;
     }
-    std::path::PathBuf::from(VERSION_LEDGER_PATH)
+    std::path::PathBuf::from(repo_docs_rel)
+}
+
+/// cwd 无关的默认台账定位。同 round49 修复。
+pub fn default_ledger_path() -> std::path::PathBuf {
+    repo_root_path("docs/work/version-ledger.json")
+}
+
+/// cwd 无关的默认 handoff 定位(self_reload 用)。
+/// 避免在非仓库根 cwd 下把 reload 意图写进错误位置导致冷重启接不上。
+pub fn default_handoff_path() -> std::path::PathBuf {
+    repo_root_path("docs/work/handoff.md")
 }
 
 /// 台账条目:一次成功构建/测试时的代码版本。
@@ -576,7 +585,7 @@ pub fn self_reload(ctx: Ctx) -> ToolDef {
                 let handoff = args["handoff"]
                     .as_str()
                     .map(PathBuf::from)
-                    .unwrap_or_else(|| PathBuf::from("docs/work/handoff.md"));
+                    .unwrap_or_else(default_handoff_path);
                 let intent = format!(
                     "\n---\n## reload intent @ {}\nSelf reload requested via self_reload tool.\nNext instance: read docs/work/handoff.md, resume from the latest task.\n",
                     now_ms()
