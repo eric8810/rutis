@@ -1208,3 +1208,25 @@ codex thread_goals 目标预算(round38 defer 因"mock usage 全 0 不可测";ro
 
 **另一条长线(rutis-dsh 装自我工具)判断仍成立**:我实际跑 examples/tui(dsh 是
 TS host 另线),装配自我工具对它仍属 YAGNI,维持不做。
+
+## 七十一、真实 bug 修复:rutis-cordis host_cordis 缺少 #[ignore](技术债)(自主续跑)
+
+**发现过程**:todo"审视未覆盖真实bug"→ 我误用 `rutis-cordis` 跑全量,看到
+  `host_cordis event_seam` FAILED(DSH_ROOT not set),先疑为 bug。核实后真相双层次:
+1. **我的命令口径错误**:240 基线权威口径是 `rutis-agent + rutis-dsh + rutis(内核)`
+   (=240/0),不是 rutis-cordis。基线核确认 118+5+117=240 全绿。
+2. **真实技术债**:host_cordis 的 min-cordis host e2e 需要外部 DSH_ROOT+MIN_CORDIS_ROOT
+    checkout,但**缺 #[ignore]**,使同一仓库里"依赖外部环境"的 e2e 不一致——
+   real_backend 用 `#[ignore=...]`(默认跳过),host_cordis 却裸跑导致 `cargo test
+   -p rutis-cordis` 在任何 clean 环境(无该 checkout)都硬失败,误导人以为有 bug。
+
+**修复**:给 `event_seam_end_to_end_with_min_cordis_host` 加 `#[ignore="min-cordis host
+  e2e: needs DSH_ROOT+MIN_CORDIS_ROOT; run with -- --ignored"]`,与 real_backend 一致。
+  RUTIS_SKIP_NODE_E2E 守卫保留(手动 --ignored 跑时逃生门)。效果:
+- 默认 `cargo test -p rutis-cordis` **18 passed/0 failed 绿**(无论是否设 env);
+- `-- --ignored` 手动跑且缺 env → 仍显式报 DSH_ROOT 缺失(保留 M2-1 显式红诚实性)。
+
+**提交**:f680907。**验证**:240 基线核(agent118+dsh5+rutis117)= 240/0 绿;
+  rutis-cordis 默认 18/0 绿。**状态**:工作区净。
+**教训**:跑测试务必用基线声明的 crate 清单(rutis-agent+dsh+rutis),勿用 rutis-cordis
+  当"工作区三 crate";host_cordis 属 cordis 集成,不并入 240 核。
