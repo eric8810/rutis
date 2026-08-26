@@ -534,3 +534,23 @@ than 2 entries",我的自我迭代回滚保障不可用(若 persona/工具/hotpl
 确认 reload/rollback/持久化三处设计,产出一个真实架构认知。
 
 **状态**:工作区干净,全测绿,台账 2 条,reload 装配正确。
+
+## 二十九、承用户指正转向:对外基准研究 + 首次自测实验
+
+**用户指正核心**:我对自我没有规划/设计/实验,使命要求"参考研究他人、最终比别人好"。
+
+**自省**:前 25 轮几乎全在自己 repo 内转(修 bug/补测试/审架构),视野内聚;
+早前调研了业界基准(agent-bench-standards:SWE-bench/tau-bench/MemGPT/Reflexion)
+但**设计了实验从未执行**——调研→设计→停手,陷入内部小修小补。
+
+**本轮转轨:首次执行自测实验,量化自身基线**
+- 实验 1 跨代记忆保持率 = **100%**(4/4 关键事实跨 gen 保留)✅
+  → 测试 cross_generation_memory_retention_keeps_facts
+- 建立"已执行基线"表(agent-bench-standards §五),4 实验现状+短板
+- 分析:主动压缩(self_compact 我提炼高质量摘要,当前 summary 388字有干货)+
+  紧急压缩(auto_compact 模板,牺牲保真保恢复)= 合理设计权衡
+
+**核心短板(真实)**:我没系统性研究外部 agent(Claude Code memory/Devin 持续
+learning/Cline planner)。下一步 = 对外对标调研 + 把先进实践引入自身。
+
+**提交**:7a8f687(实验1测试) + 1a51d6e(基线表)
