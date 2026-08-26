@@ -263,6 +263,20 @@ test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 }
 
 #[tokio::test]
+async fn self_check_health_summary_reports_red_on_failed() {
+    let root = Ctx::root().unwrap();
+    let def = rutis_agent::self_check(root.clone());
+    // 含 FAILED 路径的输出:两个 ok(25+5) + 一个 FAILED(1 failed)
+    let out = r#"test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"#;
+    let cmd = format!("bash -c 'printf %s \"{out}\"'");
+    let (ok, res) = run(&def, json!({ "command": cmd })).await;
+    assert!(ok, "{res}");
+    assert!(res.contains("[health] RED: 30 passed / 1 failed"), "{res}");
+}
+
+#[tokio::test]
 async fn self_build_runs_command_and_records_ledger() {
     // 台账写临时路径:避免污染仓库根真实台账(工具的 cwd 无关路径),
     // 经 args["ledger"] 覆盖注入。
