@@ -981,3 +981,14 @@ cwd-relative,已全修:
 **提交**:249eea9。**状态**:工作区净,全套绿。
 **下一步**:继续审视其它 tools 的功能测试空白(self_check/self_hotload可能有)/
   其它真实问题 / 维护。
+
+## 五十六、hotplug_load 失败路径测试补强 + 工具覆盖确认(自主续跑)
+
+- **工具功能测试空白确认**:遍历 self_tools() 全部 11 工具,均已有功能测试
+  (round55 已补 self_todo/self_compact),无"仅注册未测路"。
+- **本轮补**:hotplug_load 失败路径——不存在 .so → 工具返回清晰 error
+  (非 panic/挂起)。此前只有成功路径(已构建 .so)测试。
+  `hotplug_load_nonexistent_path_reports_error`。self_iteration_loop 3/3。
+
+**提交**:923813d。**状态**:工作区净,全套绿。
+**下一步**:工具覆盖已完整(成功+失败路径)。其它真实问题/技能库沉淀/维护。
