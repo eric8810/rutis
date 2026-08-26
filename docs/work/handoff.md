@@ -608,3 +608,21 @@ build 记录的是 2b42d03 因为那是 build 时的 HEAD;提交 167ff95 后台�
 
 **提交**:36f34be(研究) + e61de11(实验3) + 758a339(基线表)
 **状态**:工作区净,全测绿,技能库持久可用(skill self_tool)。
+
+## 三十三、实验2量化 + 首个真差距落地(soft-trim)(自主续跑)
+
+**实验2 量化基线**:hotplug 端到端(注册→调用→返回)2/2 成功
+`self_iteration_loop.rs::hotplug_load_then_call_is_end_to_end`。热加载即插即用实证。
+实验4(supervisor)判定为 cli 层职责,agent crate 不重复。
+
+**真差距落地(第一块)**:从 grok compaction.pruning 研究 → 长工具输出 soft-trim:
+- tool_result_message 超长(>~3080 chars)输出裁剪为 头1500 + '[trimmed…]' + 尾1500
+- 正常输出原样;测试 tool_result_long_output_is_trimmed
+- 解决长会话上下文膨胀根因(大 tool result 永久占上下文)
+- 无回归(全套件绿)。peer-study 差距表该行 → FIXED。
+
+**当前基线**:实验1记忆100% + 实验2热加载2/2 + 实验3压缩保真100%(rich)/0%(template)。
+记忆+热加载+压缩皆量化。真差距进度:工具修剪已修;待子代理(远期)。
+
+**提交**:6ac06f5/7522153(实验2) + 48bad82(soft-trim) + 5cd52bf(study表)
+**状态**:工作区净,全测绿,技能库持久可用。台账待累积(下次 build 记录当前 HEAD)。
