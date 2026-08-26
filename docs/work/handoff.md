@@ -241,3 +241,24 @@ turn 冲突取消。
 - 事件回调栈内不能同步调 followup(它再 emit 同类型事件 → 递归/冲突)。
 - turn 级并发必须由 driver 互斥串行,不能靠调用方自觉。
 - 死机前的工作要能还原:git diff + 待办 + handoff = 断点续接凭据。
+
+## 十一、修复 self_iteration_loop 假绿(102cc24,自主续跑 #1 发现)
+
+### 症状
+`self_iteration_loop` 测试每次都 ok,但细看有 `skip: .so not built` 打印。
+
+### 根因(cwd 敏感的假绿)
+测试用相对路径 `target/debug/librutis_hotplug_demo.so`。cargo test 以
+`crates/rutis-agent/` 为 cwd,该相对路径指向 `crates/rutis-agent/target/`,
+不存在 → 测试静默 skip。**闭环(persona+hotplug+auto-resume)从没真正验证过。**
+
+### 修复
+CRABGO_MANIFEST_DIR 定位(往上级两级 = 仓库根,固定 crates/ 布局),cwd 无关。
+修复后测试真跑两个强断言:① release_notes 被 hotplug_load 挂进 registry
+② 第 3 轮 system 是 self_persona 更新的 v4。
+
+### 教训
+- 测试里的相对路径产物依赖是**假绿温床**:cargo 不再以仓库根为 cwd。
+- 别被 pass 蒙蔽——留意 eprintln skip 打印,那是"没测"的信号。
+- 自主续跑不是空转:我实际编译 demo so 并在线加载 release_notes,才发现
+  这个假绿(因为我在仓库根手动验证成功,而测试在 crate 目录跑失败)。
