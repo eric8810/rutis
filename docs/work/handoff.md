@@ -798,3 +798,16 @@ build 记录的是 2b42d03 因为那是 build 时的 HEAD;提交 167ff95 后台�
 **提交**:cb47032。**状态**:工作区净,llm_seam 4/4 + unit_loop 15 绿,零警告。
 
 **下一步**:继续仓库真实改进(如我自审清单里的长线:id=1 早期有"tech debt 扫描"待办、或 dsh 更多边界) × 维护(台账/全绿/健康)。研究转轨已充分,回到做真实工程。
+
+## 四十四、rutis 实机健康首次真实验证(真实 DEEPSEEK,非 mock)(自主续跑)
+
+环境中存在 DEEPSEEK_API_KEY → 运行久被 ignore 的真实端到端测试:
+- `cargo test -p rutis-agent --test real_backend -- --ignored`
+- `real_backend_multi_turn_with_tool` **ok(3.83s)**:真实 deepseek-chat 驱动,
+  ① 第一轮模型真实调用 get_weather 工具(saw_tool 断言)+ 非空回答;
+  ② 第二轮 history 连续(模型能指代第一轮),messages ≥ 5(多轮+工具往返)。
+- **意义**:补上了转轨一直标注但未实测的"rutis 实机健康"——不仅是 mock/replay
+  层测试,而是真实 LLM 后端下的端到端端健康验证,且通过。非假绿
+  (真的断言了工具调用 + history 连续)。
+
+**状态**:工作区净。基线记忆100%/热加载2/2/压缩保真100%vs0%,现已补实机 e2e 通过。
