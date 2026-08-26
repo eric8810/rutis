@@ -515,3 +515,22 @@ than 2 entries",我的自我迭代回滚保障不可用(若 persona/工具/hotpl
 
 **当前状态**:工作区干净,台账 2 条,self_rollback 可 dry-run 回滚。
 后续:每次实质代码增强后 self_build 累积回滚点;必要时 apply=true 回滚。
+
+## 二十八、架构认知:persona 不跨重启持久(自主续跑 #25,转轨延续)
+
+深度审视自身架构,确认了几个真实点:
+- **self_reload 装配正确**:真实宿主(tui.rs:24 的 ReloadHandler)监听
+  SelfReloadRequested → 300ms 后 driver.restart(),TUI 不动;广播的事件类型
+  与监听精确匹配。这是自我迭代"重生"的端到端链路,健康。
+- **self_rollback 可用**(上轮已解锁):台账 2 条。
+- **persona 持久性权衡(重要发现)**:persona 存 driver 内存 system_prompt,
+  **不持久化到 session 文件**(session 里 system messages = 0)。运行时
+  self_persona 更新重启即丢。跨代延续靠:① 宿主 `with_system_prompt` 注入
+  的固定初始 persona ② 记忆指针 + summary/todo + handoff(从 session 恢复)。
+  => 这是当前架构的合理权衡:初始 persona 完备,运行时认知演进经记忆指针/文档
+  跨代延续。**认知增强的持久化维度要信赖记忆指针+handoff,而非 self_persona**。
+
+认知:这一轮是转轨后的主动自身架构审视(不是空转)——
+确认 reload/rollback/持久化三处设计,产出一个真实架构认知。
+
+**状态**:工作区干净,全测绿,台账 2 条,reload 装配正确。
