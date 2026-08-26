@@ -852,3 +852,20 @@ build 记录的是 2b42d03 因为那是 build 时的 HEAD;提交 167ff95 后台�
 **提交**:4fc9a0a(审读笔记)。**状态**:工作区净。
 **基线**:记忆100%/热加载2/2/压缩保真100%vs0% + 实机 e2e 通过。
 **下一步**:继续仓库真实改进(潜在边界/长线) × 技能库 × 维护。
+
+## 四十八、真实 bug 修复:skill 工具 cwd 无关(自主续跑)
+
+**从 cwd 敏感警告落地真实修复**(self-review-checklist 明确警告过此类问题):
+- **bug**:`skill` 工具用 runtime-cwd 相对路径 `docs/skills/index.md` 读技能库。
+  当 agent 在非仓库根 cwd 运行(含 cargo test 以 crate 为 cwd、子目录调起 CLI)
+  时,"read skills index ... No such file",技能库不可用 ∵违反"技能库=长期
+  知识载体"设计。
+- **修复**:`skills_index_path()` 用编译期 `CARGO_MANIFEST_DIR` 上溯到仓库根
+  (`/../../docs/skills/index.md`)定位,失败回退相对路径。Arc 共享进闭包。
+- **真实测试(非假绿)**:skill_is_registered_self_tool 增强——实际 `(def.run)`
+  执行 `skill {key:list}`,断言读到 SKILL-U1。测试是 crate cwd(非仓库根),
+  已实测旧相对路径在该 cwd 下读不到 → 测试真实验证修复。self_tools 11/11。
+- **评审**:生产 unwrap 审查(round46)后首个真实代码改动 = 有效 bug 关闭,
+  非审读空转。
+
+**提交**:e5846f1。**状态**:工作区净,self_tools 11/11,编译零警告。
