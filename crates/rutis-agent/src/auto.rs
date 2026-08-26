@@ -9,12 +9,12 @@
 //!   继续;连续失败 → 降低活动频率但保持存活。
 //! - **空转不是死循环,是降频**:无产出 → 加大退避间隔,但不停止;
 //!   有产出 → 恢复高频。
-//! - **观察对错,做出更好的进化选择**:把最近几轮观察(消息数/成败)
-//!   拼进自我激活 prompt,让模型"看到历史再做决策"。
-//!
-//! 宿主(CLI/TUI)装配:`ctx.events().on(&root, SelfDriven::new())`。
+//! - **观察对错,做出更好的进化选择**:观察不只数消息数,还检测
+//!   **实质产出**(git 工作区变化:未提交改动 / commit 数 / 文件变化),
+//!   把最近几轮观察拼进自我激活 prompt,让模型"看到历史再做决策"。
 
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 
 use rutis::{BoxFuture, CordisError, Ctx};
 
@@ -32,6 +32,52 @@ const FAIL_DECAY: usize = 3;
 /// 观察窗口:最近 N 轮结果(拼进自我激活 prompt)。
 const OBSERVATION_WINDOW: usize = 5;
 
+/// 工作区快照:检测"实质产出"(git 未提交改动数 + HEAD 数)。
+#[derive(Debug, Clone, Default)]
+struct WorkspaceSnapshot {
+    dirty_count: usize,
+    head_count: usize,
+}
+
+impl WorkspaceSnapshot {
+    /// 取当前工作区快照(git status --porcelain 行数 + HEAD 短哈希字符数)。
+    fn now() -> Self {
+        let dirty_count = std::process::Command::new("git")
+            .args(["status", "--porcelain"])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| {
+                String::from_utf8_lossy(&o.stdout)
+                    .lines()
+                    .filter(|l| !l.trim().is_empty())
+                    .count()
+            })
+            .unwrap_or(0);
+        let head_count = std::process::Command::new("git")
+            .args(["rev-list", "--count", "HEAD"])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| {
+                String::from_utf8_lossy(&o.stdout)
+                    .trim()
+                    .parse::<usize>()
+                    .unwrap_or(0)
+            })
+            .unwrap_or(0);
+        Self {
+            dirty_count,
+            head_count,
+        }
+    }
+
+    /// 与旧快照比,是否有实质产出(工作区变化或 commit 前进)。
+    fn progress(&self, old: &Self) -> bool {
+        self.dirty_count != old.dirty_count || self.head_count != old.head_count
+    }
+}
+
 /// 自主驱动监听器(生存周期引擎)。
 pub struct SelfDriven {
     /// 连续失败计数(退避依据)。
@@ -40,8 +86,10 @@ pub struct SelfDriven {
     backoff_ms: AtomicUsize,
     /// 累计自动轮次(观察历史用)。
     auto_turns: AtomicUsize,
-    /// 最近观察(滚动记录):"ok:N|fail:M" 摘要。
-    observations: std::sync::Mutex<Vec<String>>,
+    /// 最近观察(滚动记录):"ok+progress / ok / fail" 摘要。
+    observations: Mutex<Vec<String>>,
+    /// 上次工作区快照(实质产出检测)。
+    last_ws: Mutex<WorkspaceSnapshot>,
 }
 
 impl SelfDriven {
@@ -50,16 +98,19 @@ impl SelfDriven {
             fail_streak: AtomicUsize::new(0),
             backoff_ms: AtomicUsize::new(BASE_BACKOFF_MS as usize),
             auto_turns: AtomicUsize::new(0),
-            observations: std::sync::Mutex::new(Vec::new()),
+            observations: Mutex::new(Vec::new()),
+            last_ws: Mutex::new(WorkspaceSnapshot::now()),
         }
     }
 
-    /// 记录一次观察(滚动窗口)。
-    fn observe(&self, e: &AgentTurnEnd, msgs: usize) {
-        let entry = if e.ok {
-            format!("ok(msgs={msgs})")
-        } else {
+    /// 记录一次观察(滚动窗口)。`progress` = 本轮是否有实质产出。
+    fn observe(&self, e: &AgentTurnEnd, msgs: usize, progress: bool) {
+        let entry = if !e.ok {
             format!("fail({})", e.error.chars().take(40).collect::<String>())
+        } else if progress {
+            format!("ok+progress(msgs={msgs})")
+        } else {
+            format!("ok(msgs={msgs})")
         };
         let mut obs = self.observations.lock().unwrap();
         obs.push(entry);
@@ -100,12 +151,17 @@ impl rutis::Listener<AgentTurnEnd> for SelfDriven {
                 return Ok(None);
             };
             let msgs = agent.session().messages().len();
-            let before_msgs = msgs;
 
-            // 观察:记录本轮结果
-            let ok = e.ok;
-            if !ok {
-                // 失败:退避升级(指数),但**不停止**——生存周期持续
+            // 实质产出检测:工作区是否有变化
+            let now_ws = WorkspaceSnapshot::now();
+            let had_progress = {
+                let last = self.last_ws.lock().unwrap();
+                now_ws.progress(&last)
+            };
+            *self.last_ws.lock().unwrap() = now_ws;
+
+            // 观察 + 退避策略
+            if !e.ok {
                 let streak = self.fail_streak.fetch_add(1, Ordering::Relaxed) + 1;
                 if streak >= FAIL_DECAY {
                     let next = (backoff_ms * 2).min(MAX_BACKOFF_MS);
@@ -115,15 +171,21 @@ impl rutis::Listener<AgentTurnEnd> for SelfDriven {
                     );
                 }
             } else {
-                // 成功:失败计数清零;若之前有退避,逐步恢复
                 self.fail_streak.store(0, Ordering::Relaxed);
-                let cur = self.backoff_ms.load(Ordering::Relaxed) as u64;
-                if cur > BASE_BACKOFF_MS {
-                    let next = (cur / 2).max(BASE_BACKOFF_MS);
+                if had_progress {
+                    // 有实质产出:恢复高频
+                    let next = (backoff_ms / 2).max(BASE_BACKOFF_MS);
                     self.backoff_ms.store(next as usize, Ordering::Relaxed);
+                } else {
+                    // 无实质产出:降频(但仍活着)
+                    let next = (backoff_ms + BASE_BACKOFF_MS).min(MAX_BACKOFF_MS);
+                    self.backoff_ms.store(next as usize, Ordering::Relaxed);
+                    eprintln!(
+                        "[self-driven] no workspace progress, backoff → {next}ms (still alive)"
+                    );
                 }
             }
-            self.observe(e, msgs);
+            self.observe(e, msgs, had_progress);
 
             // 等待退避(降频),但永远等待——生存周期
             tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
@@ -142,8 +204,6 @@ impl rutis::Listener<AgentTurnEnd> for SelfDriven {
                 ),
             };
 
-            let _ = msgs;
-            let _ = before_msgs;
             if let Some(agent) = ctx.get_as::<dyn Agent>(agent_key()) {
                 let _ = agent.followup(&input).await;
             }
