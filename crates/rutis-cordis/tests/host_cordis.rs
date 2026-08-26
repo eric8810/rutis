@@ -34,6 +34,7 @@ fn node_binary() -> Option<String> {
 }
 
 #[tokio::test]
+#[ignore = "min-cordis host e2e: needs DSH_ROOT + MIN_CORDIS_ROOT checkouts; run with -- --ignored (set RUTIS_SKIP_NODE_E2E=1 to skip this e2e)"]
 async fn event_seam_end_to_end_with_min_cordis_host() {
     // 环境缺失 = 显式失败而非静默通过(M2-1 的教训)。RUTIS_SKIP_NODE_E2E=1
     // 提供显式逃生门。
