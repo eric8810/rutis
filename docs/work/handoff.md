@@ -992,3 +992,21 @@ cwd-relative,已全修:
 
 **提交**:923813d。**状态**:工作区净,全套绿。
 **下一步**:工具覆盖已完整(成功+失败路径)。其它真实问题/技能库沉淀/维护。
+
+## 五十七、driver 边界:is_context_overflow 真实格式覆盖补强(自主续跑)
+
+审视 driver 内部边界(待办方向①),用真实 provider 格式检验
+`is_context_overflow` 的 9 个关键词:
+- **发现真实缺口**:OpenAI "Request too large for model gpt-4o" / Anthropic
+  "supports at most N tokens" **未被命中** → auto-compact 不触发、长会话退化
+  (虽有 bounded 失败降级,但主动防退化机制应覆盖真实格式)。
+- **修复**:补关键词 "too large" / "at most"。测试补两个真实格式正例 +
+  三个反例(确认不扩大误判面)。"at most" 过匹配是安全的(注释:误判最多
+  一次多余 compact,有界)。
+- 注:这正呼应 round 44 实机(真实 deepseek 会返回这类格式),auto-compact
+  对真实 provider 可靠触发。
+- lib 19/19。
+
+**提交**:c3df208。**状态**:工作区净,全套绿。
+**下一步**:driver 内部边界持续审视(context/sanitize 已完备)/ dsh或框架层 /
+  技能库沉淀 / 维护。
