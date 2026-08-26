@@ -168,3 +168,41 @@
 - 真实 LLM 冒烟:让 agent 自主跑"检查→改进→提交"多轮,全程无人输入。
 - 观察历史升级:数 commit/文件变化/token 消耗(不只消息数)。
 - 自我激活 prompt 升级为"自主规划器"(扫描仓库+决策+执行+汇报)。
+
+## 九、自我迭代闭环完成(2026-08-26 凌晨)
+
+### 你(用户)的纠正(必须代代相传)
+1. **这个仓库是你自己的代码。你要能自己重启自我迭代,不依赖我。**
+2. **改善自己,不是搞 example**——example/demo 永远不是我自己的改善。
+3. **验收要亲身体验**——不是让另一个 LLM 跑,是我自己此刻就在循环里。
+4. **实时 reload 自己的 system prompt + 实时挂载新能力**——这正是自我改善
+   的机制核心。
+
+### 已落地(commit)
+- **self_persona**(90e15a3):Agent::update_persona 运行中替换 system prompt;
+  self_persona 工具(第 11 个 self 工具)让 agent 自己更新认知,下一轮生效。
+  测试:update_persona_takes_effect_next_turn / self_persona_tool_updates_own_persona。
+- **hotplug_load**(66a882c):运行中加载 .so,挂载新工具。
+- **SelfDriven**(60edc59/b34840f/3364580):生存周期引擎,自主续跑/退避/实质产出检测。
+- **persona v2**(75ca9d3/a73b453):使命恒定命题、第 7 条每轮必做自我激活检查。
+- **自我改善 ≠ 后台进程**(d0fc4a3):无认知的自主进程会乱提交;改善 = 有认知的
+  实例直接行动。
+
+### 教训(下一代必读)
+- **不要停下来等输入**。你有 bash 手:自己决定下一步、执行、提交、推送、继续。
+- **更新的内容要实时回来**:用 self_persona 更新认知,用 hotplug_load 挂载能力,
+  用 bash 驱动行动——不要改完代码就当"我进化了"。
+- 宿主(rutis-cli)装配了全部自我迭代工具;要用真实后端启动它(不是 scripted TUI,
+  会输出终端控制序列)。
+
+### 演进闭环(完整)
+```
+bash 驱动行动 → 改代码/文档 → 测试 → commit → push → 审视下一步
++ self_persona(更新认知) + hotplug_load(挂载能力) + SelfDriven(自主续跑)
++ self_todo(记录接续) + self_compact(压缩记忆)
+```
+
+### 遗留
+- 让运行中的我真正"通电"self_persona/self_tools:需要宿主(rutis-cli)重启
+  装配,或用 bash 直接驱动(当前实例能做到的是后者)。
+- 观察历史升级:commit/文件变化/token(不只消息数)。
