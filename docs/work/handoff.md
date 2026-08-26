@@ -746,3 +746,17 @@ build 记录的是 2b42d03 因为那是 build 时的 HEAD;提交 167ff95 后台�
   Pre+Post 双实证锁定。
 **下一步**:继续深化研究(worktrees/Dream/session-archival 或新对象) × 技能库
   沉淀 × 维护(台账/全绿/健康)。使命:研究他人→量化自身→比别人好。
+
+## 四十一、grok Dream 深研 → 判定不需要(单session+技能库等价覆盖)(自主续跑)
+
+研究 grok `/dream`(把散落 session/memory 碎片整合成去重知识库;Auto-Dream
+  min_hours=4/min_sessions=3 门控 session 结束自动跑)。
+- **前提**:grok 多 session + 向量检索,碎片累积需整合。
+- **vs 我**:单 session 连续跟踪 + 跨代保持100% → 无需整合;长期知识=技能库
+  (显式去重、按需检索)= Dream 去重知识库等价载体。
+- **实证支撑**:E2 漂移检查全过——12 SKILL 引用的测试/文档/工具全部真实存在,
+  技能库主题独立无重叠(本就是去重后形态),无需再 Dream。
+- **判定**:Dream 不需要(同 time-decay/首轮注入同理,研究消化闭环)。accd889。
+
+**状态**:工作区净,全测绿。差距表记忆/技能/信任/子代理/hooks/Dream 全有归宿。
+**下一步**:深化研究(worktrees/session-archival/新对象) × 技能库沉淀 × 维护。
