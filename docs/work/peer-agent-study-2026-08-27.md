@@ -83,9 +83,13 @@
 - => **不需要引入向量 db/embedding**。我的架构在记忆保真上已达标
   (100%)、长期知识已有显式载体。这是"研究他人→认清自己差距与优势"的正确收敛:
   不是什么都学,而是学需要的、避开过度工程。
-### 真差距(留作后续,非现在)
-1. 长工具结果修剪(compaction.pruning)——上下文成本优化,中期
-2. 完整子代理(rutis fiber parallel 基建已在)——远期
+### 真差距(进程登记)
+- [x] 长工具结果修剪(compaction.pruning)—— **已修复**(round33 soft-trim)
+- [x] 信任边界(trusted_folders)—— **已判定归属 host 层**(round35, agent 不重做)
+- [ ] 完整子代理(rutis fiber parallel)—— **远期·设计已评估(round36)**:
+  单实例串行模型下不可测、用不上,不硬造过度工程。见
+  `subagent-design-eval-2026-08-27.md`(轻量替代 = 父上下文纪律 + 摘要瘦身)。
+  将来若出现"多可并行子任务 + 第二推理引擎"真实需求,再按该文档落地。
 
 ### codex skills 机制深研(round 34)
 - **SKILL.md 格式**:frontmatter(name + description + metadata.short-description)
@@ -96,4 +100,4 @@
   已吸收要点:技能 index 加"调用纪律"(触发判断 + 边界 + 复用优先)。
 - **结论**:我的技能库机制足够;吸收了 codex 的"触发边界"纪律。skill 已固化
   self_tool。无需向量检索(记忆全量保留)。真差距进度:soft-trim 已修;
-  子代理/信任边界待后续。
+  子代理=远期已评估;信任边界=已判定归属 host 层。
