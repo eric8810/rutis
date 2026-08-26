@@ -20,6 +20,21 @@
 | 目标追踪 | — | **goals_1.sqlite** | todo(单值) |
 | 会话工作 | sessions/ | sessions/ + worktrees | .rutis/session.json |
 
+## codex 目标预算(thread_goals)深研(round 38)
+- **表结构**:`thread_goals`(thread_id PK, goal_id, objective, status
+  CHECK active/paused/blocked/usage_limited/budget_limited/complete,
+  token_budget, tokens_used, time_used_seconds, 时间戳)。
+  **不是多目标列表**;是"每线程一个带资源预算的目标"。
+- **核心增量 vs 我**:`max_steps` 仅"每轮步数上限"(每轮重置)。codex 是
+  "进程级跨轮累计 token 预算 + 经济状态机"。隐患:很多轮各自不超 max_steps,
+  但整体烧掉巨额 token(成本失控)是 max_steps 未覆盖的真实缺口。
+- **计量源可用**:`aimux_core::result::GenerateResult.usage: Usage`(UsageSnapshot:
+  input_total/cache_read/cache_write/output_total/output_reasoning)—— 非空账。
+- **当前判定**:真差距,但**前瞻性**。现状 mock/replay 环境 usage 全 0,不可测;
+  改核心循环(stream→usage 采集 + 跨轮记账 + 超限状态)成本中高、当前无真收益。
+  → 记录为前瞻设计:真实后端跑起来后,在 driver 循环加"累计 usage vs token_budget
+  超限中断 + budget_limited 状态"。现在不动核心循环(避免为不可测机制引入风险)。
+
 ## 我 vs 他人的实质差距(落到可增强)
 
 1. **显式技能库(skills)**:Codex 有 skills/ 目录,rutis 的技能全硬编码。→

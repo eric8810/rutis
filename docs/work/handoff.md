@@ -695,3 +695,20 @@ build 记录的是 2b42d03 因为那是 build 时的 HEAD;提交 167ff95 后台�
 
 **下一步**:真差距探索已完成阶段性收束。转向① 深化其它grok机制(如 Dream/首轮注入外的)
   或新研究 ② 技能库/文档持续沉淀 ③ 持续维护(台账/全绿/健康)。
+
+## 三十八、codex goals(thread_goals)机制深研(自主续跑)
+
+研究 codex `~/.codex/goals_1.sqlite::thread_goals`:
+- 结构:thread_id 主键 + objective + status(active/paused/blocked/usage_limited/
+  budget_limited/complete)+ token_budget + tokens_used + time_used_seconds。
+  是"每线程一个带资源预算的目标",非 multi-goal 列表。
+- 增量 vs 我:max_steps 是"每轮步数上限"(每轮重置);codex 是进程级跨轮累计
+  token 预算 + 经济状态机。真实缺口 = 多轮各不超 max_steps 但整体成本失控。
+- 计量源:aimux `GenerateResult.usage: Usage`(UsageSnapshot 字段)可用,非空账。
+- **判定**:真差距但前瞻——mock 环境 usage 全 0 不可测;改核心循环成本中高当前
+  无真收益。记录为前瞻设计(真实后端后落 driver 累计 usage vs token_budget)。
+  与 trust-boundary/supervisor 同治理:当前形态不为不可测机制引入风险。
+- 沉淀:peer-agent-study 新增「codex goal 深研」节(研究消化闭环)。
+
+**状态**:工作区净,全测绿。差距表记忆/技能/信任/子代理已全clean;goals 项为前瞻记录。
+**下一步**:继续① 深化其它研究或转向新对象 ② 技能库/文档沉淀 ③ 维护(台账/全绿)。
