@@ -782,7 +782,6 @@ fn compact_information_fidelity_keeps_key_facts_via_summary() {
         "早前关键信息: {} | {} | {} | {} | {}",
         facts[0], facts[1], facts[2], facts[3], facts[4]
     );
-    let total_before = s.messages().len();
     let (before, after) = s.compact(high_quality_summary, 2); // 只留最近 2 条
     assert!(after < before, "压缩应裁剪: {before} -> {after}");
     assert_eq!(s.messages().len(), 2, "只保留最近 2 条");

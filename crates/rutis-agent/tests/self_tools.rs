@@ -460,7 +460,6 @@ async fn self_hotload_adds_tool_visible_to_model() {
     // 验证 1:turn2 触发时,model 的 tool schema 里已含 my_fresh_tool,
     //       且真实被调用过(工具执行过而非 schema-only)
     let mut saw_schema = false;
-    let mut saw_invocation = false;
     {
         let calls = llm.calls.lock().unwrap();
         for c in calls.iter() {
@@ -474,8 +473,6 @@ async fn self_hotload_adds_tool_visible_to_model() {
     // 工具被调用:turn2 里 model 发了 my_fresh_tool 的 tool_call。
     // 通过 agent 的 session 历史验证:存在对 my_fresh_tool 的工具结果消息。
     assert!(saw_schema, "self_hotload 后 model 的 tool schema 应含 my_fresh_tool");
-    // 记录调用证据
-    let _ = saw_invocation;
 
     soon(async {
         driver_view.dispose().await.unwrap();
