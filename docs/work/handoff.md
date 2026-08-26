@@ -887,3 +887,20 @@ build 记录的是 2b42d03 因为那是 build 时的 HEAD;提交 167ff95 后台�
 **提交**:3598628。**状态**:工作区净。
 **基线**:记忆100%/热加载2/2/压缩保真100%vs0% + 实机 e2e 通过。
 **下一步**:继续 cwd 敏感系统扫描(已找 skill+ledger 两点)/其它真实 bug / 维护。
+
+## 五十、cwd 敏感系统扫描闭环(第3点 handoff 修复)(自主续跑)
+
+**systematic 扫描完成**:把 agent crate 所有文件路径依赖查清,确认仅 3 处
+cwd-relative,已全修:
+1. skill 技能库索引(round48)
+2. version-ledger 台账(round49,影响 rollback)
+3. **handoff 文档(本轮)**:self_reload 默认 `docs/work/handoff.md`。
+   非仓库根 cwd 下会把 reload-intent 写错位置 → 冷重启接不上(身份延续断)。
+- **修复**:共享 `repo_root_path()` helper(round48/49 已各自实现),default_handoff
+  /default_ledger 复用;self_reload 默认改用 default_handoff_path。
+- **测试锁定(无副作用)**:default_paths_are_cwd_independent_and_repo_rooted——
+  断言 both 默认路径解析到仓库根 docs/work 父目录,非 runtime-cwd 相对。
+- 其余 .join("\n") 为文本拼接;driver session 路径已有显式 with_session_path。
+
+**提交**:c7f6b1e。self_tools 12/12,全套绿。**状态**:工作区净。
+**下一步**:其它真实 bug/工具边界 / 技能库沉淀 / 维护。cwd 敏感已系统查清闭环。
