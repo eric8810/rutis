@@ -1023,3 +1023,15 @@ cwd-relative,已全修:
 
 **提交**:9a0c7be。**状态**:工作区净,全套绿。
 **下一步**:rutis 内核(crates/rutis)/ dsh 或框架层 审视 / 技能库沉淀 / 维护。
+
+## 五十九、rutis 内核边界审读(契约测试完备)+ 台账累积(自主续跑)
+
+- **rutis 内核审读**(待办方向①):effect 核心语义(Effect::Many LIFO 清理/
+  Disposer 幂等 dispose / drop 兜底清理 / cancel 幂等)→ **已被 crates/rutis
+  tests/contract.rs(58 契约断言)+ parity.rs(57 对等断言)专项测试锁定**,
+  全绿。内核 effect/event/fiber 边界健康,无需补测或修复。
+  内核是对 agent 的约束层,不硬改(同 trust-boundary/subagent:约束侧职责)。
+- **维护**:self_build 台账累积到 3d9aa02(→6 条)。
+
+**提交**:台账更新。**状态**:工作区净,全套绿(内核 contract 58 + parity 57)。
+**下一步**:继续内核/dsh 边界或技能库沉淀 / 维护。持续"审视边界→有结论"。
