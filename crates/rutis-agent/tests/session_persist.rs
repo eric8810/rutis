@@ -680,3 +680,74 @@ async fn todo_survives_restart_and_injects() {
     })
     .await;
 }
+
+/// 实验 1:跨代记忆保持率(外部对标:LongContext / MemGPT 记忆保持维度)
+///
+/// 第一代注入一批关键事实(多轮对话积历史),模拟 gen+1 重启后,
+/// 断言第二代 prompt 仍携带这些关键事实——不只"记忆指针存在",
+/// 而是**具体内容真的保持**。量化记忆保持率的基线。
+#[tokio::test]
+async fn cross_generation_memory_retention_keeps_facts() {
+    let tmp = TempDir::new("memretention");
+    let path = tmp.join("session.json");
+
+    // 第一代:4 轮对话,每轮注入一个关键事实,逐步建立"项目上下文"
+    let facts = [
+        "architecture uses turn_lock mutex to serialize turns",
+        "self_rollback needs version ledger with 2 entries",
+        "the killer model key is 'deepseek-chat'",
+        "deploy target is bare-metal on fast-deliver",
+    ];
+    let root1 = Ctx::root().unwrap();
+    let gen1 = load_driver(
+        &root1,
+        Some(&path),
+        facts.iter()
+            .flat_map(|f| vec![LlmResponse::content(format!("ok, recorded: {f}"))])
+            .collect(),
+    )
+    .await;
+    let agent1 = root1
+        .get_as::<dyn Agent>(agent_key())
+        .unwrap();
+    for q in 1..=4 {
+        let _ = soon(agent1.followup(&format!("remember fact {q}"))).await.unwrap();
+    }
+    soon(async {
+        gen1.0.dispose().await.unwrap();
+        gen1.1.dispose().await.unwrap();
+    })
+    .await;
+    drop(gen1.2);
+
+    // 第二代:恢复,收集 prompt 全部文本(history + system 记忆指针)
+    let root2 = Ctx::root().unwrap();
+    let (_, _, llm2) = load_driver(
+        &root2,
+        Some(&path),
+        vec![LlmResponse::content("ok").to_owned()],
+    )
+    .await;
+    let agent2 = root2.get_as::<dyn Agent>(agent_key()).unwrap();
+    assert_eq!(agent2.id().generation(), 2);
+    let _ = soon(agent2.followup("continue")).await.unwrap();
+
+    let calls = llm2.calls.lock().unwrap();
+    let all: String = calls[0]
+        .message_texts()
+        .iter()
+        .map(|(_, t)| t.clone())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    // 记忆保持率:4 个事实中几个仍出现在第二代 prompt?
+    let kept = facts.iter().filter(|f| all.contains(**f)).count();
+    let rate = kept as f64 / facts.len() as f64;
+    eprintln!("[mem-retention] kept {kept}/{} = {rate:.0}%", facts.len());
+    // 基线:全量 history 恢复 → 关键事实应变率保持(保守断言 ≥ 3/4)
+    assert!(
+        rate >= 0.75,
+        "跨代记忆保持率过低: {:.0}% (kept {}/{}). prompt: {}",
+        rate, kept, facts.len(), all
+    );
+}
