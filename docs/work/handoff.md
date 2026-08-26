@@ -1010,3 +1010,16 @@ cwd-relative,已全修:
 **提交**:c3df208。**状态**:工作区净,全套绿。
 **下一步**:driver 内部边界持续审视(context/sanitize 已完备)/ dsh或框架层 /
   技能库沉淀 / 维护。
+
+## 五十八、driver 持久化边界审读 + SKILL-E5 登记(自主续跑)
+
+- **driver 内部边界审读**(待办方向①):auto_compact(keep=40/8,跨次累加
+  summary)、driver.compact(压缩后立即 persist_session 落盘,摘要跨代保留)、
+  persist_session(无路径静默 return / 有失败 error_sink 通报)——**全健康且有
+  测试锁定**,无待修缺口(有依据,非空转)。
+- **技能库沉淀**:新增 SKILL-E5 启发式判别的真实输入覆盖(round57 经验:
+  审视关键词/if 逻辑用真实 provider 格式检验漏判,别只看理想形式)。技能库
+  现 13 条目,反映最新健康方法论。
+
+**提交**:9a0c7be。**状态**:工作区净,全套绿。
+**下一步**:rutis 内核(crates/rutis)/ dsh 或框架层 审视 / 技能库沉淀 / 维护。
