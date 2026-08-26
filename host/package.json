@@ -24,7 +24,8 @@
   ],
   "scripts": {
     "build": "esbuild src/plugin.ts --bundle --format=esm --platform=node --outfile=lib/plugin.js --external:@deepseek-ai/* && tsc",
-    "acceptance": "node --import tsx src/main.ts"
+    "acceptance": "node --import tsx src/main.ts",
+    "test": "tsx --test tests/*.test.ts"
   },
   "dsh": {
     "bundle": {
