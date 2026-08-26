@@ -1062,3 +1062,18 @@ cwd-relative,已全修:
 **提交**:无(纯审读+确认,工作区净)。
 **状态**:工作区净,236 passed 全景绿。
 **下一步**:内核/dsh 继续或转向文档/维护。全景基准已确立。
+
+## 六十二、kernel registry 边界审读 + 完整健康基线固化(自主续跑)
+
+- **registry(服务注册表)边界审读**:服务 provide/lookup/scope/类型错配/
+  依赖刷新(refresh)/reload 重激活——全部被 contract.rs 契约测试锁定
+  (late_provider_activates / provider_reload_reactivates / check_recovery
+  reactivates / refresh 不挂起等)+ parity.rs。registry 边界健康,无缺口。
+  内核主要边界(effect/fiber/bus/registry/dispatch_chain)已系统审读完备,均
+  健康有契约锁。
+- **完整健康基线固化**:agent-bench-standards 追加第六节——236 passed / 0
+  failed 全景(按层分表)+ 实机 e2e + 工具失败路径 + 已修 bug 台账 + 15 SKILL,
+  作为未来实例对照的健康标尺。
+
+**提交**:388635f。**状态**:工作区净,236 全景绿。
+**下一步**:内核边界已系统审读完备;可转向文档沉淀/未来方向规划/维护。
