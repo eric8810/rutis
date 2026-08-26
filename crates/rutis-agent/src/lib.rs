@@ -65,6 +65,7 @@
 #![allow(clippy::type_complexity)]
 
 mod agent;
+mod auto;
 mod driver;
 mod events;
 mod minimal;
@@ -74,6 +75,7 @@ mod tools;
 mod tui;
 
 pub use agent::{agent_key, Agent, AgentError, AgentStatus, SessionSnapshot};
+pub use auto::AutoResume;
 pub use driver::{llm_key, session_path_key, AgentDriver, AgentDriverPlugin};
 pub use events::{
     AgentPreStep, AgentStepEvent, AgentTextDelta, AgentToolCall, AgentToolResult, AgentTurnEnd,

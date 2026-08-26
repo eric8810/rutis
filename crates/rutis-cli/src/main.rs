@@ -18,8 +18,8 @@ use std::sync::{
 use aimux_core::language_model::LanguageModel;
 use rutis::Ctx;
 use rutis_agent::{
-    agent_key, llm_key, minimal_persona, minimal_tools, self_tools, Agent,
-    AgentDriverPlugin, AgentTurnEnd, SelfReloadRequested, ToolsPlugin, TuiPlugin,
+    agent_key, llm_key, minimal_persona, minimal_tools, self_tools, Agent, AgentDriverPlugin,
+    AgentTurnEnd, AutoResume, SelfReloadRequested, ToolsPlugin, TuiPlugin,
 };
 
 const USAGE: &str = "\
@@ -269,6 +269,9 @@ async fn run(
     // 宿主侧督工:AgentTurnEnd 后自动评估,失败/消息数超限自动重启
     // (阈值:连续 3 次失败,或 session 消息数 > 500)
     root.events().on(&root, Supervisor::new(driver_view.clone(), 3, 500))?;
+
+    // 自动续跑:turn 结束后有待办 → 自己发起下一轮(不用用户每轮输入)
+    root.events().on(&root, AutoResume::new(5))?;
 
     // TUI 在 driver 装载完成后创建:apply 内 get agent 必成功(启动门控)
     let tui_view = root.plugin(TuiPlugin::new().with_intro(vec![
