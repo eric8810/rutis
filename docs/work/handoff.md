@@ -262,3 +262,22 @@ CRABGO_MANIFEST_DIR 定位(往上级两级 = 仓库根,固定 crates/ 布局),cw
 - 别被 pass 蒙蔽——留意 eprintln skip 打印,那是"没测"的信号。
 - 自主续跑不是空转:我实际编译 demo so 并在线加载 release_notes,才发现
   这个假绿(因为我在仓库根手动验证成功,而测试在 crate 目录跑失败)。
+
+## 十二、审视 rutis-cordis 红测试:是设计不是 bug(自主续跑 #2)
+
+`cargo test -p rutis-cordis` 有 1 个 FAILED:`event_seam_end_to_end_with_min_cordis_host`
+(需 DSH_ROOT + MIN_CORDIS_ROOT + node,连真实 min-cordis 宿主)。
+
+**不是 bug,是刻意设计**(`69534ad` "missing env now fails loudly",M2-1 教训):
+- 环境缺失 = 显式 fail,而非静默 skip(避免假绿)。
+- 逃生门:`RUTIS_SKIP_NODE_E2E=1` 显式跳过 → 逃生时全绿(17 passed)。
+- 其他 crate:rutis(57)、aimux-llm、rutis-cli 全绿。仓库健康。
+
+### 关键启发(heuristics):环境敏感测试有**两种相反方向**
+| 方向 | 表现 | 判断 | 处置 |
+|------|------|------|------|
+| 假绿 | 该跑却 skip/没跑,但 ok(如上一轮 so 路径 cwd 敏感) | 有害 | 修成真跑 |
+| 显式红 | 没环境就 fail + 逃生门 | 诚实信号 | 不能改(null 倒退回假绿) |
+
+自救要区分:同一类"测试不完整"不能一刀切修。假绿的"修成正"用在显式红上
+反而会制造新假绿。诚实的红 > 沉默的绿(假绿)。
