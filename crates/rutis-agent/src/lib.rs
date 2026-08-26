@@ -75,7 +75,7 @@ mod tools;
 mod tui;
 
 pub use agent::{agent_key, Agent, AgentError, AgentStatus, SessionSnapshot};
-pub use auto::AutoResume;
+pub use auto::SelfDriven;
 pub use driver::{llm_key, session_path_key, AgentDriver, AgentDriverPlugin};
 pub use events::{
     AgentPreStep, AgentStepEvent, AgentTextDelta, AgentToolCall, AgentToolResult, AgentTurnEnd,

@@ -19,7 +19,7 @@ use aimux_core::language_model::LanguageModel;
 use rutis::Ctx;
 use rutis_agent::{
     agent_key, llm_key, minimal_persona, minimal_tools, self_tools, Agent, AgentDriverPlugin,
-    AgentTurnEnd, AutoResume, SelfReloadRequested, ToolsPlugin, TuiPlugin,
+    AgentTurnEnd, SelfDriven, SelfReloadRequested, ToolsPlugin, TuiPlugin,
 };
 
 const USAGE: &str = "\
@@ -270,8 +270,9 @@ async fn run(
     // (阈值:连续 3 次失败,或 session 消息数 > 500)
     root.events().on(&root, Supervisor::new(driver_view.clone(), 3, 500))?;
 
-    // 自动续跑:turn 结束后有待办 → 自己发起下一轮(不用用户每轮输入)
-    root.events().on(&root, AutoResume::new(5))?;
+    // 自主驱动:turn 结束后自我激活——有 todo 做 todo;无 todo 自主反思
+    // 该做什么(自我进化);空转(无进展)检测防浪费,不设死上限。
+    root.events().on(&root, SelfDriven::new())?;
 
     // TUI 在 driver 装载完成后创建:apply 内 get agent 必成功(启动门控)
     let tui_view = root.plugin(TuiPlugin::new().with_intro(vec![
