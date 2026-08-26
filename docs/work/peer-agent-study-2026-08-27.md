@@ -20,6 +20,25 @@
 | 目标追踪 | — | **goals_1.sqlite** | todo(单值) |
 | 会话工作 | sessions/ | sessions/ + worktrees | .rutis/session.json |
 
+## grok sessions(17-sessions)深研(round 42)
+- **grok session 架构**:updates.jsonl(权威日志)+ summary.json(索引:model/timestamps/
+  message-count/parent)+ compaction_checkpoints/(压缩检查点)+ chat_history.jsonl。
+- **能力**:/resume(浏览恢复)、/rewind(恢复文件到更早点 + 截断历史)、
+  /compact(手动+auto),、/flush(保存)。
+- **vs 我(逐项)**:
+  | grok | 我 | 判定 |
+  |------|-----|------|
+  | /resume | Session::restore + 多代 | ✅ 已有 + 跨代 |
+  | /rewind 截断历史 | Session::truncate_to | ✅ 已有(历史截断) |
+  | /rewind 恢复文件 | — (git/host) | 🔖 host 层职责(同 trust-boundary) |
+  | /compact 手动+auto | compact + auto_compact | ✅ 已有 |
+  | compaction_checkpoints | 无(原地压缩) | 🔖 价值低:我压缩100%保真
+    (实验3),摘要已含关键信息,无需检查点回退(非破坏性) |
+  | summary.json(索引) | session.json(单文件) | ~ 我单 session 连续跟踪,无需多索引 |
+- **判定**:session 健壮性(restore/resume/rewind-truncate/compact)我全有;
+  compaction-checkpoint 对我价值低(高保真压缩非破坏);rewind 文件恢复属 host。
+  研究消化闭环。无新落地。
+
 ## grok Dream 整合深研(round 41)
 - **grok /dream**:把散落的 session logs + memory entries 整合成有组织、去重的
   知识库,减少噪声、改善搜索;Auto-Dream 按 min_hours=4 / min_sessions=3 门控
