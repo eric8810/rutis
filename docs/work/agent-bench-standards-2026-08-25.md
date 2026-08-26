@@ -62,7 +62,7 @@
 | # | 实验 | 指标 | 基线 | 测量 | 状态 |
 |---|------|------|------|------|------|
 | 1 | 跨代记忆保持 | 关键事实保留率 | **100%** (4/4) | `session_persist.rs::cross_generation_memory_retention_keeps_facts` | ✅ 已跑 |
-| 2 | 热加载能力 | 注册/调用成功率 | examples/hot_load.rs 已跑通(定性) | examples/hot_load.rs | ⚠️ 未量化 |
+| 2 | 热加载能力 | 注册→调用端到端成功率 | **(2/2) 注册+调用** 即插即用 ok | `self_iteration_loop.rs::hotplug_load_then_call_is_end_to_end` | ✅ 已量化 |
 | 3 | 长会话压缩 | 摘要信息保留率 | 优质摘要 **100%**(5/5) vs 模板 0%(5/5) | `session_persist.rs::compact_information_fidelity_keeps_key_facts_via_summary` | ✅ 已量化 |
 | 4 | 督工恢复 | 恢复时间/成功率 | rutis-cli Supervisor 测试已绿(定性) | rutis-cli | ⚠️ 未量化 |
 
