@@ -2,6 +2,7 @@
 //! - 无 todo 也自我激活(核心:agent 不停下,自主继续)
 //! - 空转检测:模型不产出(消息不增长)时停止(防浪费)
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use rutis::Ctx;
@@ -85,4 +86,62 @@ async fn stops_when_no_progress() {
 
     let _ = dv.dispose().await;
     let _ = tv.dispose().await;
+}
+
+/// 关键修复验证:SelfDriven 自主激活的 turn 不应被取消(cancelled)。
+/// 之前的 bug:AgentTurnEnd 在 driver followup 内部 emit,SelfDriven 在
+/// 事件栈内同步调 followup → status 仍 Running → 冲突取消。
+/// 修复:turn_lock 互斥 + spawn 延迟,自主续跑的 turn 应全部成功。
+#[tokio::test]
+async fn auto_activation_turns_are_not_cancelled() {
+    let root = Ctx::root().unwrap();
+    // 3 个响应:用户 1 轮 + 自主 2 轮
+    let responses: Vec<LlmResponse> = (0..3)
+        .map(|i| LlmResponse::content(format!("round {i}")))
+        .collect();
+    root.provide_as(llm_key(), rutis_agent::into_service(ScriptedLlm::new(responses)))
+        .unwrap();
+    let tools_view = root.plugin(ToolsPlugin::new(rutis_agent::minimal_tools()));
+    let driver_view = root.plugin(AgentDriverPlugin::new(20));
+    (&tools_view).await.unwrap();
+    (&driver_view).await.unwrap();
+
+    // 捕获 turn 结果:ok vs cancelled
+    let results: Arc<std::sync::Mutex<Vec<String>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+    struct Track(Arc<std::sync::Mutex<Vec<String>>>);
+    impl rutis::Listener<rutis_agent::AgentTurnEnd> for Track {
+        fn call<'a>(
+            &'a self,
+            _ctx: &'a Ctx,
+            e: &'a rutis_agent::AgentTurnEnd,
+        ) -> rutis::BoxFuture<'a, Result<Option<()>, rutis::CordisError>> {
+            let r = self.0.clone();
+            let ok = e.ok;
+            let err = e.error.clone();
+            Box::pin(async move {
+                r.lock().unwrap().push(if ok { "ok".to_string() } else { format!("fail: {err}") });
+                Ok(None)
+            })
+        }
+    }
+    root.events().on(&root, Track(results.clone())).unwrap();
+
+    // 装配 SelfDriven 后,用户启动 1 轮 → 自主续跑
+    root.events().on(&root, SelfDriven::new()).unwrap();
+    let agent = root.get_as::<dyn Agent>(agent_key()).unwrap();
+    let _ = soon(agent.followup("start")).await.unwrap();
+
+    // 等自主续跑 2 轮(响应耗尽后停止)
+    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+
+    let results = results.lock().unwrap();
+    eprintln!("turn results: {results:?}");
+    // 所有 turn 都应成功,**没有任何 cancelled**
+    assert!(
+        results.iter().all(|r| r == "ok"),
+        "自主激活的 turn 不应 cancelled: {results:?}"
+    );
+
+    let _ = driver_view.dispose().await;
+    let _ = tools_view.dispose().await;
 }
