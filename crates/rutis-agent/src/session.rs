@@ -8,7 +8,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use aimux_core::message::ModelMessage;
+use aimux_core::message::{ModelMessage, Role};
 use serde::{Deserialize, Serialize};
 
 /// 全局 session 计数器:driver 创建 session 时分配(仅首次分配用;
@@ -146,6 +146,13 @@ impl Session {
         &self.messages
     }
 
+    /// 截断到最近 `len` 条(移除越界消息;`len` ≥ 当前长度则不变)。
+    /// 用于 turn 失败回滚:把本轮 push 的悬挂 user / 半成品 assistant/tool
+    /// 全部移除,使 session 恢复为上一轮结束时的干净状态(原子 turn)。
+    pub fn truncate_to(&mut self, len: usize) {
+        self.messages.truncate(len);
+    }
+
     /// 记忆摘要(长会话压缩后);None = 无摘要。
     pub fn summary(&self) -> Option<&str> {
         self.summary.as_deref()
@@ -169,6 +176,21 @@ impl Session {
         if self.messages.len() > keep {
             let cut = self.messages.len() - keep;
             self.messages.drain(..cut);
+        }
+        (before, self.messages.len())
+    }
+
+    /// 规整历史,保证 session 结构合法(损坏/超大时的一次性修复):
+    /// 1) 丢弃孤儿 tool_result(前面无配对 tool_call);
+    /// 2) 剥离 assistant 里未紧邻 tool_result 的悬空 tool_call;
+    /// 3) 裁掉尾部连续无 assistant 回复的 user(自主续跑失败死循环的残留)。
+    /// 复用 `driver::sanitize_history`(与每次请求前的在线规整同一套逻辑)。
+    /// 返回裁掉前/后的消息数,便于调用方观测。
+    pub fn sanitize(&mut self) -> (usize, usize) {
+        let before = self.messages.len();
+        self.messages = crate::driver::sanitize_history(&self.messages);
+        while self.messages.last().is_some_and(|m| m.role == Role::User) {
+            self.messages.pop();
         }
         (before, self.messages.len())
     }

@@ -72,6 +72,10 @@ pub struct AgentDriver {
     system_prompt: Mutex<Option<String>>,
     /// 可选 session 持久化路径;None = 不持久化(默认,现状不变)。
     session_path: Option<PathBuf>,
+    /// turn 互斥:保证同一时刻只有一个 followup 在改 session。
+    /// 并发 turn(TUI 提交 vs SelfDriven 自主续跑)会在同一把锁上排队,
+    /// 避免 user/assistant/tool 的 push 交错导致历史乱序(悬空 tool_call)。
+    turn_lock: tokio::sync::Mutex<()>,
 }
 
 /// `tools/pre-execute` 终态续延:放行。
@@ -126,6 +130,7 @@ impl AgentDriver {
             max_steps,
             system_prompt: Mutex::new(system_prompt),
             session_path,
+            turn_lock: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -143,6 +148,21 @@ impl AgentDriver {
             let err: Box<dyn std::error::Error + Send + Sync> = format!("session persist failed: {e}").into();
             self.ctx.error_sink()(Arc::new(CordisError::PluginFailed(err)));
         }
+    }
+
+    /// 上下文超限兜底(Fix 3):保留最近 `keep` 条消息,早期历史折叠进
+    /// summary。摘要优先沿用既有 summary(跨次 compact 累加信息),否则用
+    /// 一句标记;compact() 内部会自动落盘。有界重试在 run_loop 里控制。
+    fn auto_compact(&self, keep: usize) {
+        let summary = {
+            let session = self.session.lock().unwrap();
+            session
+                .summary()
+                .map(str::to_string)
+                .unwrap_or_else(|| "（早期对话因超出模型上下文窗口被自动裁剪,细节不可恢复）".to_string())
+        };
+        let (before, after) = self.compact(summary, keep);
+        eprintln!("[driver] auto-compact: messages {before} -> {after} (kept last {keep})");
     }
 
     fn fresh_turn_token(&self) -> CancellationToken {
@@ -339,39 +359,61 @@ impl AgentDriver {
                     self.system_prompt.lock().unwrap().clone()
                 }
             };
-            let prompt = convert_to_language_model_prompt(
-                self.session.lock().unwrap().messages(),
-                system.as_deref(),
-            );
-            let tools = self.tools.schemas();
+            // 每步重建 prompt:Fix 4 先用 sanitize_history 规整 session(去掉
+            // 因并发/历史损坏导致的悬空 tool_call / 孤儿 tool_result),再配合
+            // Fix 3 的上下文超限自动 compact + 有界重试。
+            let mut ctx_retry = 0u32;
+            let mut result = 'llm: loop {
+                // Fix 4:规整历史(确保 assistant/tool 配对、无孤儿)后再转 prompt
+                let prompt = {
+                    let session = self.session.lock().unwrap();
+                    let sanitized = sanitize_history(session.messages());
+                    convert_to_language_model_prompt(&sanitized, system.as_deref())
+                };
+                let tools = self.tools.schemas();
 
-            // ── agent/pre-step waterfall:改写/拒绝进入这步(默认原样)──
-            let (prompt, tools) = self
-                .ctx
-                .events()
-                .waterfall(
-                    &self.ctx,
-                    &AgentPreStep {
-                        session,
-                        step,
-                        prompt: prompt.clone(),
-                        tools: tools.clone(),
-                    },
-                    pre_step_default,
-                )
-                .await
-                .map_err(|e| AgentError::Pipeline(e.to_string()))?
-                .map_err(AgentError::Pipeline)?;
+                // ── agent/pre-step waterfall:改写/拒绝进入这步(默认原样)──
+                let (prompt, tools) = self
+                    .ctx
+                    .events()
+                    .waterfall(
+                        &self.ctx,
+                        &AgentPreStep {
+                            session,
+                            step,
+                            prompt: prompt.clone(),
+                            tools: tools.clone(),
+                        },
+                        pre_step_default,
+                    )
+                    .await
+                    .map_err(|e| AgentError::Pipeline(e.to_string()))?
+                    .map_err(AgentError::Pipeline)?;
 
-            let mut result = self
-                .llm
-                .do_stream(&CallOptions {
-                    prompt,
-                    tools: Some(tools),
-                    ..CallOptions::default()
-                })
-                .await
-                .map_err(|e| AgentError::Llm(e.to_string()))?;
+                match self
+                    .llm
+                    .do_stream(&CallOptions {
+                        prompt,
+                        tools: Some(tools),
+                        ..CallOptions::default()
+                    })
+                    .await
+                {
+                    Ok(r) => break 'llm r,
+                    // Fix 3:上下文超限 → 自动 compact 后重试(有界),避免拿越来
+                    // 越大的 prompt 硬试、越滚越挂的死循环。
+                    Err(e) => {
+                        let msg = e.to_string();
+                        if ctx_retry < 2 && is_context_overflow(&msg) {
+                            ctx_retry += 1;
+                            eprintln!("[driver] context overflow, auto-compact & retry ({ctx_retry}/2)");
+                            self.auto_compact(if ctx_retry == 1 { 40 } else { 8 });
+                            continue 'llm;
+                        }
+                        return Err(AgentError::Llm(msg));
+                    }
+                }
+            };
 
             // 观察:逐块收 TextDelta emit 广播,同时累积 assistant 内容
             let mut text = String::new();
@@ -505,6 +547,429 @@ enum Chunk {
     Part(Result<StreamPart, AiMuxError>),
 }
 
+/// 判断 LLM 错误信息是否属于"上下文超限"类(Fix 3)。
+/// 启发式:误判最多触发一次多余的 compact + 重试(有界),漏判则退化为
+/// 普通失败(回滚 + SelfDriven 退避),两个方向都安全。
+pub(crate) fn is_context_overflow(err: &str) -> bool {
+    let s = err.to_lowercase();
+    [
+        "context",
+        "too long",
+        "too many tokens",
+        "exceed",
+        "input length",
+        "prompt is too",
+        "longer than",
+        "maximum context",
+        "token limit",
+    ]
+    .iter()
+    .any(|k| s.contains(k))
+}
+
+fn tool_call_ids(m: &ModelMessage) -> Vec<String> {
+    match &m.content {
+        MessageContent::Parts(parts) => parts
+            .iter()
+            .filter_map(|p| match p {
+                ContentPart::ToolCall {
+                    tool_call_id, ..
+                } => Some(tool_call_id.clone()),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn tool_result_ids(m: &ModelMessage) -> Vec<String> {
+    match &m.content {
+        MessageContent::Parts(parts) => parts
+            .iter()
+            .filter_map(|p| match p {
+                ContentPart::ToolResult {
+                    tool_call_id, ..
+                } => Some(tool_call_id.clone()),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// 规整历史消息,保证发给 LLM 的序列合法(Fix 4)。
+/// 以"assistant + 紧随其后的连续 tool 消息"作为一个 tool block:
+///   1) 保留 assistant 里"block 内有对应 tool_result"的 tool_call,剥离其余悬空 call;
+///   2) 只保留 block 内被保留 call 覆盖的 tool_result,丢弃孤儿结果;
+///   3) 剥离后为空的 assistant 丢弃;user/system 及纯文本 assistant 原样保留;
+///   4) 无前置 assistant 的顶层 tool 视为孤儿丢弃。
+/// 纯函数,不修改 session 本身。
+pub(crate) fn sanitize_history(msgs: &[ModelMessage]) -> Vec<ModelMessage> {
+    let n = msgs.len();
+    let mut out: Vec<ModelMessage> = Vec::with_capacity(n);
+    let mut i = 0;
+    while i < n {
+        let m = &msgs[i];
+        if m.role != Role::Assistant {
+            // user/system 原样保留;无前置 assistant 的顶层 tool 是孤儿,丢弃
+            if m.role != Role::Tool {
+                out.push(m.clone());
+            }
+            i += 1;
+            continue;
+        }
+
+        // assistant:收集紧随其后的连续 tool 消息(一个 tool block)
+        let mut block: Vec<&ModelMessage> = Vec::new();
+        let mut j = i + 1;
+        while j < n && msgs[j].role == Role::Tool {
+            block.push(&msgs[j]);
+            j += 1;
+        }
+        let block_results: std::collections::HashSet<String> = block
+            .iter()
+            .map(|t| tool_result_ids(t))
+            .flatten()
+            .collect();
+        let kept_calls: std::collections::HashSet<String> = tool_call_ids(m)
+            .into_iter()
+            .filter(|c| block_results.contains(c))
+            .collect();
+
+        // 重写 assistant:只保留被结果覆盖的 call,其余 part 原样
+        let new_parts: Vec<ContentPart> = match &m.content {
+            MessageContent::Parts(parts) => parts
+                .iter()
+                .filter_map(|p| match p {
+                    ContentPart::ToolCall {
+                        tool_call_id, ..
+                    } => kept_calls.contains(tool_call_id).then(|| p.clone()),
+                    other => Some(other.clone()),
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        if matches!(m.content, MessageContent::Text(ref t) if !t.is_empty()) {
+            out.push(m.clone());
+        } else if !new_parts.is_empty() {
+            out.push(ModelMessage {
+                role: Role::Assistant,
+                content: MessageContent::Parts(new_parts),
+            });
+        }
+
+        // 输出 block 内被保留 call 覆盖的 tool 消息,丢弃孤儿结果
+        for t in block {
+            if tool_result_ids(t).iter().any(|r| kept_calls.contains(r)) {
+                out.push(t.clone());
+            }
+        }
+
+        i = j;
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tools::ToolsPlugin;
+    use crate::{LlmResponse, ScriptedLlm};
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    async fn soon<F, T>(f: F) -> T
+    where
+        F: std::future::Future<Output = T>,
+    {
+        tokio::time::timeout(std::time::Duration::from_secs(5), f)
+            .await
+            .expect("timed out")
+    }
+
+    /// Fix 4:规整真实损坏序列——孤儿 tool_result 丢弃、无紧邻结果的 call 剥离。
+    #[test]
+    fn sanitize_drops_orphan_tool_result_and_unpaired_call() {
+        let msgs = vec![
+            ModelMessage {
+                role: Role::Assistant,
+                content: MessageContent::Parts(vec![
+                    ContentPart::Text {
+                        text: "t1".into(),
+                        provider_options: None,
+                    },
+                    ContentPart::tool_call("A", "bash", serde_json::json!({})),
+                ]),
+            },
+            ModelMessage {
+                role: Role::Assistant,
+                content: MessageContent::Parts(vec![
+                    ContentPart::Text {
+                        text: "t2".into(),
+                        provider_options: None,
+                    },
+                    ContentPart::tool_call("B", "bash", serde_json::json!({})),
+                ]),
+            },
+            ModelMessage {
+                role: Role::Tool,
+                content: MessageContent::Parts(vec![ContentPart::tool_result(
+                    "B",
+                    serde_json::Value::String("ok".into()),
+                )]),
+            },
+            ModelMessage::user("继续"),
+            ModelMessage::user("自主续跑"),
+            // 孤儿:A 的结果排在两条 user 之后,前面已无"在飞"的 A call
+            ModelMessage {
+                role: Role::Tool,
+                content: MessageContent::Parts(vec![ContentPart::tool_result(
+                    "A",
+                    serde_json::Value::String("late".into()),
+                )]),
+            },
+        ];
+        let out = sanitize_history(&msgs);
+        let roles: Vec<Role> = out.iter().map(|m| m.role).collect();
+        assert_eq!(
+            roles,
+            vec![Role::Assistant, Role::Assistant, Role::Tool, Role::User, Role::User]
+        );
+        // 只有 B 的结果留下,A(孤儿)被丢弃
+        let tool_ids: Vec<String> = out
+            .iter()
+            .filter(|m| m.role == Role::Tool)
+            .flat_map(tool_result_ids)
+            .collect();
+        assert_eq!(tool_ids, vec!["B".to_string()]);
+        // 第一条 assistant 的 call A 被剥离,只剩文本
+        assert!(matches!(
+            &out[0].content,
+            MessageContent::Parts(p) if p.len() == 1
+        ));
+    }
+
+    #[test]
+    fn sanitize_keeps_valid_tool_roundtrip() {
+        let msgs = vec![
+            ModelMessage::user("hi"),
+            ModelMessage {
+                role: Role::Assistant,
+                content: MessageContent::Parts(vec![ContentPart::tool_call(
+                    "X",
+                    "bash",
+                    serde_json::json!({}),
+                )]),
+            },
+            ModelMessage {
+                role: Role::Tool,
+                content: MessageContent::Parts(vec![ContentPart::tool_result(
+                    "X",
+                    serde_json::Value::String("done".into()),
+                )]),
+            },
+        ];
+        let out = sanitize_history(&msgs);
+        assert_eq!(out.len(), 3, "合法往返不应被改动");
+    }
+
+    /// 一条 assistant 发起多个 call、由多条 tool 消息回答:必须全部保留(此前会误剥)。
+    #[test]
+    fn sanitize_keeps_multi_call_multi_result() {
+        let msgs = vec![
+            ModelMessage {
+                role: Role::Assistant,
+                content: MessageContent::Parts(vec![
+                    ContentPart::tool_call("A", "bash", serde_json::json!({})),
+                    ContentPart::tool_call("B", "read", serde_json::json!({})),
+                ]),
+            },
+            ModelMessage {
+                role: Role::Tool,
+                content: MessageContent::Parts(vec![ContentPart::tool_result(
+                    "A",
+                    serde_json::Value::String("ra".into()),
+                )]),
+            },
+            ModelMessage {
+                role: Role::Tool,
+                content: MessageContent::Parts(vec![ContentPart::tool_result(
+                    "B",
+                    serde_json::Value::String("rb".into()),
+                )]),
+            },
+        ];
+        let out = sanitize_history(&msgs);
+        assert_eq!(out.len(), 3, "多 call 多 result 的合法往返应原样保留");
+        // assistant 的两个 call 都在
+        let calls = tool_call_ids(&out[0]);
+        assert!(calls.contains(&"A".to_string()) && calls.contains(&"B".to_string()));
+    }
+
+    #[test]
+    fn context_overflow_detection() {
+        assert!(is_context_overflow("context length exceeded: 350000 > 128000"));
+        assert!(is_context_overflow("prompt is too long: 50000 tokens"));
+        assert!(is_context_overflow("This model's maximum context window is 128K"));
+        assert!(!is_context_overflow("tool execution rejected"));
+        assert!(!is_context_overflow("network timeout"));
+    }
+
+    /// Fix 2 原语:truncate_to 把 session 截回指定长度(幂等)。
+    #[test]
+    fn session_truncate_to_rolls_back() {
+        let mut s = Session::new();
+        for i in 0..10 {
+            s.push(ModelMessage::user(format!("m{i}")));
+        }
+        s.truncate_to(4);
+        assert_eq!(s.messages().len(), 4);
+        s.truncate_to(8); // 目标 > 当前 → 不变
+        assert_eq!(s.messages().len(), 4);
+    }
+
+    /// Session::sanitize(一次性修复):丢孤儿 tool_result + 裁尾部悬挂 user。
+    #[test]
+    fn session_sanitize_repair() {
+        let mut s = Session::new();
+        s.push(ModelMessage::user("hi"));
+        s.push(ModelMessage {
+            role: Role::Assistant,
+            content: MessageContent::Parts(vec![ContentPart::tool_call(
+                "A",
+                "bash",
+                serde_json::json!({}),
+            )]),
+        });
+        s.push(ModelMessage {
+            role: Role::Tool,
+            content: MessageContent::Parts(vec![ContentPart::tool_result(
+                "A",
+                serde_json::Value::String("ok".into()),
+            )]),
+        });
+        // 孤儿 B:前面无配对 call
+        s.push(ModelMessage {
+            role: Role::Tool,
+            content: MessageContent::Parts(vec![ContentPart::tool_result(
+                "B",
+                serde_json::Value::String("late".into()),
+            )]),
+        });
+        // 尾部悬挂 user(死循环残留)
+        s.push(ModelMessage::user("续跑1"));
+        s.push(ModelMessage::user("续跑2"));
+
+        let (before, after) = s.sanitize();
+        assert_eq!(before, 6);
+        assert_eq!(after, 3);
+        let roles: Vec<Role> = s.messages().iter().map(|m| m.role).collect();
+        assert_eq!(roles, vec![Role::User, Role::Assistant, Role::Tool]);
+    }
+
+    /// Fix 2:失败 turn 不留悬挂 user——空脚本 LLM 必然失败,回滚后 session 长度不变。
+    #[tokio::test]
+    async fn failed_turn_rolls_back_session() {
+        let root = Ctx::root().unwrap();
+        let llm: Arc<dyn LanguageModel> = Arc::new(ScriptedLlm::new(Vec::new()));
+        let llm_d = root.provide_as(llm_key(), llm).unwrap();
+        let tools_v = root.plugin(ToolsPlugin::new(Vec::new()));
+        let driver_v = root.plugin(AgentDriverPlugin::new(16));
+        (&tools_v).await.expect("tools loads");
+        (&driver_v).await.expect("driver loads");
+        let agent = root.get_as::<dyn Agent>(agent_key()).unwrap();
+
+        let before = agent.session().messages().len();
+        let res = soon(agent.followup("hi")).await;
+        assert!(res.is_err(), "空脚本 LLM 必然失败");
+        assert_eq!(
+            agent.session().messages().len(),
+            before,
+            "失败 turn 应回滚,不留悬挂 user"
+        );
+
+        llm_d.dispose().await.unwrap();
+        tools_v.dispose().await.unwrap();
+        driver_v.dispose().await.unwrap();
+    }
+
+    /// Fix 3:上下文超限 → 自动 compact 后重试成功(超大 session 自愈)。
+    #[tokio::test]
+    async fn context_overflow_triggers_auto_compact_then_succeeds() {
+        struct OverflowOnce {
+            inner: ScriptedLlm,
+            hit: AtomicBool,
+        }
+        #[async_trait::async_trait]
+        impl LanguageModel for OverflowOnce {
+            fn provider(&self) -> &str {
+                self.inner.provider()
+            }
+            fn model_id(&self) -> &str {
+                self.inner.model_id()
+            }
+            async fn do_generate(
+                &self,
+                o: &CallOptions,
+            ) -> Result<aimux_core::result::GenerateResult, AiMuxError> {
+                self.inner.do_generate(o).await
+            }
+            async fn do_stream(
+                &self,
+                o: &CallOptions,
+            ) -> Result<aimux_core::result::StreamResult, AiMuxError> {
+                if !self.hit.swap(true, Ordering::SeqCst) {
+                    return Err(AiMuxError::InvalidArgument(
+                        "400: prompt is too long, context length exceeded".into(),
+                    ));
+                }
+                self.inner.do_stream(o).await
+            }
+        }
+
+        // 预置 50 条历史的 session 文件(> 40,确保触发裁剪)
+        let path = std::env::temp_dir().join(format!("rutis-overflow-test-{}.json", std::process::id()));
+        {
+            let mut s = Session::new();
+            for i in 0..50 {
+                s.push(if i % 2 == 0 {
+                    ModelMessage::user(format!("q{i}"))
+                } else {
+                    ModelMessage::assistant(format!("a{i}"))
+                });
+            }
+            s.persist(&path).unwrap();
+        }
+
+        let root = Ctx::root().unwrap();
+        let llm: Arc<dyn LanguageModel> = Arc::new(OverflowOnce {
+            inner: ScriptedLlm::new(vec![LlmResponse::content("done")]),
+            hit: AtomicBool::new(false),
+        });
+        let llm_d = root.provide_as(llm_key(), llm).unwrap();
+        let tools_v = root.plugin(ToolsPlugin::new(Vec::new()));
+        let driver_v = root
+            .plugin(AgentDriverPlugin::new(16).with_session_path(path.clone()));
+        (&tools_v).await.expect("tools loads");
+        (&driver_v).await.expect("driver loads");
+        let agent = root.get_as::<dyn Agent>(agent_key()).unwrap();
+        assert!(agent.session().messages().len() > 40, "应恢复了 50 条历史");
+
+        let res = soon(agent.followup("go")).await;
+        assert!(res.is_ok(), "compact 后应成功: {res:?}");
+        assert!(agent.session().summary().is_some(), "超限应触发自动 compact");
+        assert!(
+            agent.session().messages().len() <= 42,
+            "compact 后应大幅缩减,实际={}",
+            agent.session().messages().len()
+        );
+
+        llm_d.dispose().await.unwrap();
+        tools_v.dispose().await.unwrap();
+        driver_v.dispose().await.unwrap();
+        let _ = std::fs::remove_file(&path);
+    }
+}
+
 impl Agent for AgentDriver {
     fn id(&self) -> SessionId {
         self.session.lock().unwrap().id()
@@ -553,12 +1018,24 @@ impl Agent for AgentDriver {
 
     fn followup<'a>(&'a self, input: &'a str) -> BoxFuture<'a, Result<String, AgentError>> {
         Box::pin(async move {
-            // 感知起点:用户消息进 session,turn 用全新取消令牌
+            // 防重入(Fix 1):整个 turn(push user + run_loop)持锁串行,
+            // 并发 followup(TUI 提交 vs SelfDriven 自主续跑)排队执行,
+            // 不会交错写 session 造成历史乱序/悬空 tool_call。
+            let _guard = self.turn_lock.lock().await;
+
+            // 原子 turn(Fix 2):记录 turn 前长度,失败时回滚本轮所有 push。
+            let before = self.session.lock().unwrap().messages().len();
             self.session.lock().unwrap().push(ModelMessage::user(input));
             let token = self.fresh_turn_token();
             self.status.set(AgentStatus::Running);
             let out = self.run_loop(&token).await;
             self.status.set(AgentStatus::Idle);
+            // 失败回滚:移除本轮 push 的悬挂 user + 半成品 assistant/tool,
+            // 恢复 turn 前状态,避免坏历史累积(否则每次失败都留一条 user,
+            // 连排 + 越滚越长,最终每次请求都非法/超长)。
+            if out.is_err() {
+                self.session.lock().unwrap().truncate_to(before);
+            }
             self.emit_turn_end(self.id(), &out);
             // 保存时机 ①:每 turn 结束原子落盘(未配置路径 = no-op)
             self.persist_session();

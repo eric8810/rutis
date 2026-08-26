@@ -205,7 +205,16 @@ impl rutis::Listener<AgentTurnEnd> for SelfDriven {
             };
 
             if let Some(agent) = ctx.get_as::<dyn Agent>(agent_key()) {
-                let _ = agent.followup(&input).await;
+                // 关键:不能在事件回调栈内同步 followup——
+                // AgentTurnEnd 在 driver 的 followup 内部 emit,此时前一 turn
+                // 尚未完全返回(status 仍 Running),再调 followup 会冲突取消。
+                // spawn 独立任务延迟执行,等当前 turn 结束后再启动下一个。
+                let handle = ctx.handle().clone();
+                handle.spawn(async move {
+                    // 再等一拍,确保前一 turn 的 emit 完全落定
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    let _ = agent.followup(&input).await;
+                });
             }
             Ok(None)
         })

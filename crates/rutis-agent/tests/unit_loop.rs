@@ -846,9 +846,9 @@ async fn status_transitions_and_session_grows() {
     let (_, done) = soon(run_turn(&octx, &agent, "no responses left")).await;
     assert!(done.is_err());
     assert_eq!(agent.status(), AgentStatus::Idle);
-    // user 消息在错误时也已入 session(感知先于思考):
-    // turn1 = user+assistant,turn2 失败 = 仅 user
-    assert_eq!(agent.session().messages().len(), 3);
+    // Fix 2:失败 turn 回滚,不留悬挂 user——turn2 失败不新增消息
+    // turn1 = user+assistant(2 条),turn2 失败回滚 → 仍是 2
+    assert_eq!(agent.session().messages().len(), 2);
 }
 
 // 15. 卸载 driver fiber 后服务消失
