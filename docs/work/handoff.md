@@ -574,3 +574,19 @@ learning/Cline planner)。下一步 = 对外对标调研 + 把先进实践引入
 
 **提交**:28b0aa8(skills 库 + peer-study)
 **当前工程状态**:工作区干净,全测绿,技能库可用,实验1基线 100%。
+
+## 三十一、skill 固化为持久 self_tool(167ff95,自主续跑 收尾)
+
+round 30 的热加载 skill 是易失的(重启即丢)。本轮把它固化为:
+- `skill()` 注册进 self_tools,读取 docs/skills/index.md(动态,库演进自动反映)
+- lib.rs re-export;测试 skill_is_registered_self_tool 锁定
+- self_tools schema 测试更新(11+skill=12 工具)
+
+**意义**:技能库从"热加载临时垫脚"变为"跨重启稳定的能力载体",
+与 VERSION_LEDGER_PATH 一致用相对路径(docs/...)。
+
+固化版需宿主重启才在当前进程生效(编译进 tui);热加载版是旧演示副本。
+
+**状态**:工作区净,全测绿,台账记录到 167ff95?确认后小(台账由 self_build 记,本轮
+build 记录的是 2b42d03 因为那是 build 时的 HEAD;提交 167ff95 后台账仍指向 2b42d03,
+下次 build 会记录 167ff95 —— rollback 点随 build 自然累积,符合设计)。
