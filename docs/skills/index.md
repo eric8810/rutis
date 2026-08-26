@@ -27,6 +27,13 @@
     环境缺就 fail + 明确提示 = 显式红(不改,如 dsh node e2e 的
     `assert node_modules exists` / `#[ignore]`+key)。判定看"缺依赖时是静默没跑
     还是显式失败"。圆:两方向相反。
+  → **依赖"缺失的外部产物"(如外部 checkout DSH_ROOT/MIN_CORDIS_ROOT)∪无须
+    #[ignore]**(round71/72 实操):必须加 `#[ignore="..."]` 否则 `cargo test -p`
+    在 clean 环境硬失败、误导人当 bug(host_cordis 曾中招)。默认跳过、`-- --ignored`
+    手动触发;手动跑时缺依赖仍保留显式红(panic 报缺啥),非静默跳过。
+    而依赖"存在产物"(node/path)的测试(llm_e2e/tcp_e2e)默认真跑绿,不该 ignore。
+    判别=依赖的生产物在默认环境"缺"(ignore)还是"在"(默认真跑)。同仓库应一致
+    (对齐 real_backend 的 `#[ignore="..."]` 模式;host_cordis 已按此修复)。
 
 ### 二、记忆与持续
 - **SKILL-M1 跨代记忆保持率实测** — 注入关键事实→gen+1→断言保留→100%
