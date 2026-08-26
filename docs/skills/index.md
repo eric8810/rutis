@@ -48,6 +48,11 @@
   → 台账 `../work/version-ledger.json`
 - **SKILL-E2 文档-代码漂移检查** — 验证"记录了但代码还在吗" grep #[cfg(test)]
   → checklist §4.5
+  → **反向漂移也要查(round70 实操)**:文档说"未做/不做/长线可选"的能力,代码可能
+    早已实现(TS bridge 崩溃测试 f009b72 早用 node:test+tsx landed,但 handoff 历史
+    仍写"over-engineering 不做")。只查"文档说做了→代码有吗"会漏掉这个方向,
+    导致未来实例沿用陈旧"不做"判断。修正法:对每条历史"长线/不做",git log 该能力
+    有无落地提交;有 → 补"当前事实标注"到 handoff 纠正误导(不改历史日志)。
 - **SKILL-E3 外部对标研究** — 研究本机真实 agent(grok/codex),对比架构差距
   → `../work/peer-agent-study-2026-08-27.md`
 - **SKILL-E4 长工具结果修剪(soft-trim)** — 超长 tool output 保头/保尾+标记
