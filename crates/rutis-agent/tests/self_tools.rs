@@ -389,6 +389,7 @@ async fn self_tools_registered_and_driven_in_turn() {
             "self_rollback",
             "self_status",
             "self_todo",
+            "skill",
         ],
         "{names:?}"
     );
@@ -481,4 +482,18 @@ async fn self_hotload_adds_tool_visible_to_model() {
         tools_view.dispose().await.unwrap();
     })
     .await;
+}
+
+/// `skill` 工具:固化为真实 self_tool(非热加载),检索技能库并被注册进
+/// self_tools。验证它：(1) 是 ToolDef 且名为 skill;(2) 出现在 self_tools
+/// 注册集里(model 的 tools schema 含 skill)。
+#[tokio::test]
+async fn skill_is_registered_self_tool() {
+    let def = rutis_agent::skill();
+    assert_eq!(def.name(), "skill", "skill is a registered self_tool");
+    // self_tools() 注册列表应含 skill
+    let root = Ctx::root().unwrap();
+    let defs = rutis_agent::self_tools(root);
+    let names: Vec<&str> = defs.iter().map(|t| t.name()).collect();
+    assert!(names.contains(&"skill"), "self_tools includes skill: {names:?}");
 }
