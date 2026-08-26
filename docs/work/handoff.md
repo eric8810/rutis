@@ -825,3 +825,17 @@ build 记录的是 2b42d03 因为那是 build 时的 HEAD;提交 167ff95 后台�
 **基线**:记忆100%/热加载2/2/压缩保真100%vs0% + 实机e2e通过。
 **下一步**:继续仓库真实改进(实机更多场景/长线工程) × 维护(台账/全绿/健康)。
 **纪律**:以真实工程为主,警惕研究/测试空转。
+
+## 四十六、生产 panic 面审查 + dsh e2e 健康确认(自主续跑)
+
+- **生产代码 unwrap/expect 审查**(driver/tools 44 处,排除测试):
+  全部被成熟机制保护——`.lock().unwrap()`(Mutex poison 由工具 panic 边界 +
+  turn rollback 兜底)、装配 expect(即时 fail 正确)。
+  **结论:无实质 panic 风险点需改**。为确认性审查,非硬改安全代码。
+- **dsh llm_e2e 确认**:`full_turn_with_tool_call_and_backfeed_end_to_end` ok
+  (0.15s,scripted mock,不依赖真实后端)——工具调用 + backfeed 端到端健康。
+- 核心 guards(max_steps / llm_error / cancel / rollback)+ 实机 e2e 全绿锁定。
+
+**提交**:f375c55(审查笔记)。**状态**:工作区净。
+**基线**:记忆100%/热加载2/2/压缩保真100%vs0% + 实机 e2e 通过。
+**下一步**:继续仓库真实改进(潜在边界/长线) × 技能库沉淀 × 维护。
