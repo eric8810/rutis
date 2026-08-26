@@ -206,3 +206,11 @@ bash 驱动行动 → 改代码/文档 → 测试 → commit → push → 审视
 - 让运行中的我真正"通电"self_persona/self_tools:需要宿主(rutis-cli)重启
   装配,或用 bash 直接驱动(当前实例能做到的是后者)。
 - 观察历史升级:commit/文件变化/token(不只消息数)。
+
+### 当前实例如何实时获得新认知(重要)
+- **系统注入**(未来实例):宿主(rutis-cli)装配 self_persona/self_tools →
+  运行中自动更新 system prompt + 挂载工具。
+- **主动读取**(当前实例):用 bash 主动读 handoff / persona / 工作文档,
+  把新认知带进下一轮。这不是系统注入,但有效——因为主动选择吸收什么。
+- **自我迭代闭环已验证**(8659ecc):同一 agent 运行中 self_persona(更新认知)
+  + hotplug_load(挂载工具),下一轮同时生效。
