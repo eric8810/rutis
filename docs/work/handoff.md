@@ -1230,3 +1230,25 @@ TS host 另线),装配自我工具对它仍属 YAGNI,维持不做。
   rutis-cordis 默认 18/0 绿。**状态**:工作区净。
 **教训**:跑测试务必用基线声明的 crate 清单(rutis-agent+dsh+rutis),勿用 rutis-cordis
   当"工作区三 crate";host_cordis 属 cordis 集成,不并入 240 核。
+
+## 七十二、一致性审视收敛:host_cordis 是唯一需要的 #[ignore](诚实结论)(自主续跑)
+
+延续 round71(host_cordis #[ignore] 修复),本轮系统扫描"其它未覆盖一致性/技术债",
+得出**收敛结论——无新增待落地项**,理由如下(防未来实例重复扫描):
+
+**扫描全部 20 个 tests/*.rs,甄别"有环境依赖但无 #[ignore]"的候选:**
+- `rutis-dsh/llm_e2e`、`rutis-cordis/tcp_e2e`:依赖 node(在 node_modules),
+  **默认真跑通过**(dsh e2e 1/1 绿、tcp_e2e 1/1 绿)——依赖的产物存在,不该 ignore。
+- `rutis-agent/session_persist`/`self_iteration_loop`/`self_tools`:grep"存在"均为
+  **测试内部自建临时路径**(落盘/插件构建产物/写出的工作文件),内部自洽,非外部依赖。
+- 唯一"依赖缺失外部 checkout(DSH_ROOT/MIN_CORDIS_ROOT)"的是 host_cordis——
+  **round71 已加 #[ignore] 修复**,默认清环境 rutis-cordis 18/0 绿。
+
+**240 基线口径与数字核对:**
+- bench §六 合计 240:agent(118)+dsh(5)+rutis(117)= **240/0**,与实测一致。
+- rutis 内核 58+57+2=117 ✓(实测一致);agent 行省略号只是排版。
+- 240 口径 crate 清单 `rutis-agent+dsh+rutis`(非 cordis)已在 round71 明确、bench §75 写对。
+
+**排除项**:无其它测试需补 #[ignore];无基准数字漂移;无残留"三 crate"误导说法。
+
+**倾向**:本轮无代码改动(收敛确认);连续无改动一轮即降频,保持激活。
