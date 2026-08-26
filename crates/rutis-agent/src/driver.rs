@@ -523,12 +523,35 @@ fn assistant_message(text: &str, calls: &[ToolCall]) -> ModelMessage {
 }
 
 /// 工具结果消息回喂(role=tool)。
+/// 长工具输出 soft-trim(对标 grok compaction.pruning 的 soft_trim):
+/// 超过 `TOOL_RESULT_KEEP` 字符的输出,裁剪为「头 + 裁剪标记 + 尾」,
+/// 防止超大 tool result 永久撑爆会话上下文(长会话退化的根因之一)。
+/// 只在真正超长时裁剪,正常路径原样 —— 不破坏现有行为与测试。
 fn tool_result_message(call: &ToolCall, out: &ToolOutput) -> ModelMessage {
+    // 保留区:前后各保留的字符(裁剪中间)。
+    const TOOL_RESULT_KEEP: usize = 1500;
+    let mut output = out.output.clone();
+    if output.chars().count() > 2 * TOOL_RESULT_KEEP + 80 {
+        let head: String = output.chars().take(TOOL_RESULT_KEEP).collect();
+        let tail: String = output
+            .chars()
+            .rev()
+            .take(TOOL_RESULT_KEEP)
+            .collect::<String>()
+            .chars()
+            .rev()
+            .collect();
+        let total = output.chars().count();
+        output = format!(
+            "{head}\n…[trimmed {} chars…]\n{tail}",
+            total - 2 * TOOL_RESULT_KEEP
+        );
+    }
     ModelMessage {
         role: Role::Tool,
         content: MessageContent::Parts(vec![ContentPart::ToolResult {
             tool_call_id: call.tool_call_id.clone(),
-            result: serde_json::Value::String(out.output.clone()),
+            result: serde_json::Value::String(output),
             tool_name: Some(call.tool_name.clone()),
             is_error: Some(!out.ok),
             preliminary: None,
@@ -770,6 +793,42 @@ mod tests {
         ];
         let out = sanitize_history(&msgs);
         assert_eq!(out.len(), 3, "合法往返不应被改动");
+    }
+
+    /// 长工具输出 soft-trim:超长保头/保尾 + 标记;正常长度原样不动。
+    #[test]
+    fn tool_result_long_output_is_trimmed() {
+        use crate::tools::ToolOutput;
+        let call = crate::scripted::tool_call("t1", "big", serde_json::json!({}));
+        // 短输出:原样
+        let short = ToolOutput { ok: true, output: "hello".into() };
+        let m = tool_result_message(&call, &short);
+        match &m.content {
+            MessageContent::Parts(parts) => match &parts[0] {
+                ContentPart::ToolResult { result, .. } => {
+                    assert_eq!(result, &serde_json::Value::String("hello".into()));
+                }
+                other => panic!("expected ToolResult, got {other:?}"),
+            },
+            other => panic!("expected Parts, got {other:?}"),
+        }
+        // 超长输出:保头 + marker + 保尾,总长 < 输入
+        let long_body: String = "x".repeat(5000);
+        let long = ToolOutput { ok: true, output: long_body.clone() };
+        let m2 = tool_result_message(&call, &long);
+        match &m2.content {
+            MessageContent::Parts(parts) => match &parts[0] {
+                ContentPart::ToolResult { result, .. } => {
+                    let s = result.as_str().expect("string result");
+                    assert!(s.len() < long_body.len(), "被裁剪: {s:.0?}");
+                    assert!(s.contains("…[trimmed"), "含裁剪标记");
+                    assert!(s.starts_with("x".repeat(1500).as_str()), "保头");
+                    assert!(s.ends_with("x".repeat(1500).as_str()), "保尾");
+                }
+                other => panic!("expected ToolResult, got {other:?}"),
+            },
+            other => panic!("expected Parts, got {other:?}"),
+        }
     }
 
     /// 一条 assistant 发起多个 call、由多条 tool 消息回答:必须全部保留(此前会误剥)。
