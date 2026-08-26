@@ -93,6 +93,9 @@ pub trait Agent: Send + Sync + 'static {
     fn compact(&self, summary: String, keep: usize) -> (usize, usize);
     /// 记录/更新待办(中断后自动接续的工作指引)。供 `self_todo` 工具调用。
     fn set_todo(&self, todo: String);
+    /// 运行中更新 system prompt(persona):自我改善真正闭环——
+    /// agent 修改自己的 persona 后立即生效,无需重启。
+    fn update_persona(&self, persona: String);
 }
 
 /// session 只读快照(session 由 driver 独占,接口层只能给拷贝)。

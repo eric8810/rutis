@@ -68,7 +68,8 @@ pub struct AgentDriver {
     cancel: Mutex<CancellationToken>,
     max_steps: usize,
     /// system prompt(minimal mode persona 等);None = 无 system 消息。
-    system_prompt: Option<String>,
+    /// Mutex:运行中可更新(self_persona 工具 / update_persona 方法)。
+    system_prompt: Mutex<Option<String>>,
     /// 可选 session 持久化路径;None = 不持久化(默认,现状不变)。
     session_path: Option<PathBuf>,
 }
@@ -123,7 +124,7 @@ impl AgentDriver {
             status: StatusCell::idle(),
             cancel: Mutex::new(CancellationToken::new()),
             max_steps,
-            system_prompt,
+            system_prompt: Mutex::new(system_prompt),
             session_path,
         }
     }
@@ -300,7 +301,7 @@ impl AgentDriver {
                 let session = self.session.lock().unwrap();
                 // 保持"无附加内容时传 None"的语义(不引入空 system 消息,
                 // 不破坏 MockReplayModel 等对 prompt 结构的断言)。
-                let mut base = self.system_prompt.clone().unwrap_or_default();
+                let mut base = self.system_prompt.lock().unwrap().clone().unwrap_or_default();
                 let mut has_extra = false;
                 // 1) 记忆摘要(长会话压缩后):前置到 system prompt,
                 //    替代被裁剪的历史,保持长会话不退化。
@@ -335,7 +336,7 @@ impl AgentDriver {
                 if has_extra {
                     Some(base)
                 } else {
-                    self.system_prompt.clone()
+                    self.system_prompt.lock().unwrap().clone()
                 }
             };
             let prompt = convert_to_language_model_prompt(
@@ -540,6 +541,10 @@ impl Agent for AgentDriver {
         }
         // 立即落盘:中断后恢复时待办可用
         self.persist_session();
+    }
+
+    fn update_persona(&self, persona: String) {
+        *self.system_prompt.lock().unwrap() = Some(persona);
     }
 
     fn cancel(&self) {

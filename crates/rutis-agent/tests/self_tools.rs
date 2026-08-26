@@ -384,6 +384,7 @@ async fn self_tools_registered_and_driven_in_turn() {
             "self_compact",
             "self_hotload",
             "self_persist",
+            "self_persona",
             "self_reload",
             "self_rollback",
             "self_status",

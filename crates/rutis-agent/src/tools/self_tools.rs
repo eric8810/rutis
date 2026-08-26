@@ -93,6 +93,7 @@ pub fn self_tools(ctx: Ctx) -> Vec<ToolDef> {
         self_persist(ctx.clone()),
         self_compact(ctx.clone()),
         self_todo(ctx.clone()),
+        self_persona(ctx.clone()),
         self_hotload(ctx.clone()),
         hotplug_load(ctx.clone()),
         self_build(ctx.clone()),
@@ -217,6 +218,45 @@ pub fn self_todo(ctx: Ctx) -> ToolDef {
                 agent.set_todo(todo.clone());
                 Ok(Value::String(format!(
                     "todo updated (will auto-resume after restart): {todo}"
+                )))
+            }
+        },
+    )
+}
+
+// ── self_persona(实时更新自己的 system prompt)───────────────────────
+
+/// `self_persona`:运行中更新自己的 system prompt(persona)。
+/// 自我改善的真正闭环:agent 意识到自己的认知需要升级时,直接调用
+/// 本工具替换 persona,下一轮立即生效——无需重启、无需宿主介入。
+/// 参数:`persona`(完整的新 system prompt 文本;建议保留使命/环境/
+/// 交接/纪律等核心段落,只改需要进化的部分)。
+pub fn self_persona(ctx: Ctx) -> ToolDef {
+    ToolDef::new(
+        "self_persona",
+        "Update your own system prompt (persona) at runtime. Pass the full new persona text. Takes effect on the next turn — no restart, no host intervention. Use it when you realize your cognition should evolve (e.g. new discipline, new self-understanding).",
+        json!({
+            "type": "object",
+            "properties": {
+                "persona": {
+                    "type": "string",
+                    "description": "The full new system prompt / persona text"
+                }
+            },
+            "required": ["persona"]
+        }),
+        move |args: Value| {
+            let ctx = ctx.clone();
+            async move {
+                let persona = args["persona"]
+                    .as_str()
+                    .ok_or_else(|| "error: persona is required".to_string())?
+                    .to_string();
+                let agent = current_agent(&ctx)?;
+                agent.update_persona(persona.clone());
+                Ok(Value::String(format!(
+                    "persona updated at runtime ({} chars). Next turn uses the new cognition.",
+                    persona.chars().count()
                 )))
             }
         },
