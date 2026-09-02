@@ -65,7 +65,6 @@
 #![allow(clippy::type_complexity)]
 
 mod agent;
-mod auto;
 mod driver;
 mod events;
 mod minimal;
@@ -75,22 +74,15 @@ mod tools;
 mod tui;
 
 pub use agent::{agent_key, Agent, AgentError, AgentStatus, SessionSnapshot};
-pub use auto::SelfDriven;
 pub use driver::{llm_key, session_path_key, AgentDriver, AgentDriverPlugin};
 pub use events::{
     AgentPreStep, AgentStepEvent, AgentTextDelta, AgentToolCall, AgentToolResult, AgentTurnEnd,
-    SelfReloadRequested, ToolPostExecute, ToolPreExecute,
+    ToolPostExecute, ToolPreExecute,
 };
 pub use minimal::{minimal_persona, minimal_tools};
 pub use scripted::{into_service, tool_call, LlmResponse, ScriptedCall, ScriptedLlm};
 pub use session::{Session, SessionId};
 pub use tools::bash::bash_tool;
-pub use tools::hotplug::hotplug_load;
 pub use tools::replace_text::replace_text_tool;
-pub use tools::self_tools::{
-    self_build, self_check, self_compact, self_hotload, self_persist, self_reload,
-    self_persona, self_rollback_tool, self_status, self_todo, self_tools, skill, VersionLedger,
-    VERSION_LEDGER_PATH, default_handoff_path, default_ledger_path,
-};
 pub use tools::{tools_key, ToolDef, ToolOutput, ToolRegistry, ToolsPlugin};
 pub use tui::TuiPlugin;

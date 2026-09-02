@@ -71,12 +71,11 @@ pub struct AgentDriver {
     /// codex thread_goals 第二增量)。默认关闭保持向后兼容。
     token_budget: Option<u64>,
     /// system prompt(minimal mode persona 等);None = 无 system 消息。
-    /// Mutex:运行中可更新(self_persona 工具 / update_persona 方法)。
-    system_prompt: Mutex<Option<String>>,
+    system_prompt: Option<String>,
     /// 可选 session 持久化路径;None = 不持久化(默认,现状不变)。
     session_path: Option<PathBuf>,
     /// turn 互斥:保证同一时刻只有一个 followup 在改 session。
-    /// 并发 turn(TUI 提交 vs SelfDriven 自主续跑)会在同一把锁上排队,
+    /// 并发 turn 会在同一把锁上排队,
     /// 避免 user/assistant/tool 的 push 交错导致历史乱序(悬空 tool_call)。
     turn_lock: tokio::sync::Mutex<()>,
 }
@@ -133,7 +132,7 @@ impl AgentDriver {
             cancel: Mutex::new(CancellationToken::new()),
             max_steps,
             token_budget,
-            system_prompt: Mutex::new(system_prompt),
+            system_prompt,
             session_path,
             turn_lock: tokio::sync::Mutex::new(()),
         }
@@ -326,13 +325,12 @@ impl AgentDriver {
             // 记忆指针:恢复的 session(generation > 1 或已有历史)在 system
             // prompt 尾部附加一段显式说明,让模型"感知"自己在继续一段历史
             // 对话而非全新会话——历史在输入里但模型不自动引用,这是
-            // session 恢复"机制生效、认知不生效"的根因(见
-            // docs/work/lesson-confabulation-2026-08-25.md)。
+            // session 恢复"机制生效、认知不生效"的根因。
             let system = {
                 let session = self.session.lock().unwrap();
                 // 保持"无附加内容时传 None"的语义(不引入空 system 消息,
                 // 不破坏 MockReplayModel 等对 prompt 结构的断言)。
-                let mut base = self.system_prompt.lock().unwrap().clone().unwrap_or_default();
+                let mut base = self.system_prompt.clone().unwrap_or_default();
                 let mut has_extra = false;
                 // 1) 记忆摘要(长会话压缩后):前置到 system prompt,
                 //    替代被裁剪的历史,保持长会话不退化。
@@ -367,7 +365,7 @@ impl AgentDriver {
                 if has_extra {
                     Some(base)
                 } else {
-                    self.system_prompt.lock().unwrap().clone()
+                    self.system_prompt.clone()
                 }
             };
             // 每步重建 prompt:Fix 4 先用 sanitize_history 规整 session(去掉
@@ -598,7 +596,7 @@ enum Chunk {
 
 /// 判断 LLM 错误信息是否属于"上下文超限"类(Fix 3)。
 /// 启发式:误判最多触发一次多余的 compact + 重试(有界),漏判则退化为
-/// 普通失败(回滚 + SelfDriven 退避),两个方向都安全。
+/// 普通失败(回滚),两个方向都安全。
 pub(crate) fn is_context_overflow(err: &str) -> bool {
     let s = err.to_lowercase();
     [
@@ -1105,10 +1103,6 @@ impl Agent for AgentDriver {
         self.persist_session();
     }
 
-    fn update_persona(&self, persona: String) {
-        *self.system_prompt.lock().unwrap() = Some(persona);
-    }
-
     fn cancel(&self) {
         self.cancel.lock().unwrap().cancel();
     }
@@ -1116,7 +1110,7 @@ impl Agent for AgentDriver {
     fn followup<'a>(&'a self, input: &'a str) -> BoxFuture<'a, Result<String, AgentError>> {
         Box::pin(async move {
             // 防重入(Fix 1):整个 turn(push user + run_loop)持锁串行,
-            // 并发 followup(TUI 提交 vs SelfDriven 自主续跑)排队执行,
+            // 并发 followup 排队执行,
             // 不会交错写 session 造成历史乱序/悬空 tool_call。
             let _guard = self.turn_lock.lock().await;
 

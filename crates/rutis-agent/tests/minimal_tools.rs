@@ -428,45 +428,6 @@ async fn str_replace_empty_old_str_rejected() {
     assert!(err.contains("`old_str` is empty"), "{err}");
 }
 
-// ── persona:self-evolving 分节提示词的必备条款锚点(设计对齐)─────
-
-#[test]
-fn persona_carries_essential_self_evolution_clauses() {
-    let persona = minimal_persona("scripted-model", "/tmp/work");
-    // 使命方向(不写死任务清单)
-    assert!(persona.contains("工程上最好的 agent"), "{persona}");
-    assert!(persona.contains("环境适应性最佳的 agent"), "{persona}");
-    assert!(persona.contains("迭代能力最强的 agent"), "{persona}");
-    // 硬纪律:执行可能中断 → 任务文档化是断点续接凭据
-    assert!(persona.contains("执行可能中断"), "{persona}");
-    assert!(persona.contains("工作文档"), "{persona}");
-    // 交接文档:会话启动先找并读 handoff
-    assert!(persona.contains("docs/work/handoff.md"), "{persona}");
-    assert!(persona.contains("交接文档"), "{persona}");
-    // 工作纪律:及时 commit,防止工作堆积在未提交状态
-    assert!(persona.contains("及时 commit"), "{persona}");
-    assert!(persona.contains("未提交"), "{persona}");
-    // 工作纪律:提交后推送远程,远程是跨实例交接通道
-    assert!(persona.contains("推送到远程"), "{persona}");
-    assert!(persona.contains("git push"), "{persona}");
-    // 自我演进:plugin 方式 + 热更新 + 仓库信息皆参考
-    assert!(persona.contains("plugin"), "{persona}");
-    assert!(persona.contains("热更新"), "{persona}");
-    // 唯一例外:minimal persona 变更需用户同意
-    assert!(persona.contains("必须经用户同意"), "{persona}");
-    // 生存周期认知(v2):使命是恒定命题,持续运行
-    assert!(persona.contains("恒定命题"), "{persona}");
-    assert!(persona.contains("失败是观察素材"), "{persona}");
-    assert!(persona.contains("持续运行"), "{persona}");
-    // 自我激活检查(每轮必做,非可选):git status → 提交 → 审视 → 待命
-    assert!(persona.contains("自我激活检查"), "{persona}");
-    assert!(persona.contains("每轮必做"), "{persona}");
-    assert!(persona.contains("git status"), "{persona}");
-    // 插值生效
-    assert!(persona.contains("scripted-model"), "{persona}");
-    assert!(persona.contains("/tmp/work"), "{persona}");
-}
-
 // ── 集成:driver 驱动"改文件 + 跑命令"的 turn(设计 §六)────────────
 
 #[tokio::test]

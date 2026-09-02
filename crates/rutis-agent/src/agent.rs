@@ -91,13 +91,10 @@ pub trait Agent: Send + Sync + 'static {
     /// 中断当前 turn;session(history)保留,下次 followup 继续。
     fn cancel(&self);
     /// 压缩 session 记忆:保存摘要,裁剪 messages 到最近 `keep` 条。
-    /// 返回 (压缩前消息数, 压缩后消息数)。供 `self_compact` 工具调用。
+    /// 返回 (压缩前消息数, 压缩后消息数)。
     fn compact(&self, summary: String, keep: usize) -> (usize, usize);
-    /// 记录/更新待办(中断后自动接续的工作指引)。供 `self_todo` 工具调用。
+    /// 记录/更新待办(中断后自动接续的工作指引)。
     fn set_todo(&self, todo: String);
-    /// 运行中更新 system prompt(persona):自我改善真正闭环——
-    /// agent 修改自己的 persona 后立即生效,无需重启。
-    fn update_persona(&self, persona: String);
 }
 
 /// session 只读快照(session 由 driver 独占,接口层只能给拷贝)。
